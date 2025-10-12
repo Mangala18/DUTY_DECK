@@ -1,0 +1,20 @@
+{
+  "name": "clockin-mysql-backend",
+  "version": "1.0.0",
+  "description": "Backend for Clockin MySQL project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "joi": "^18.0.1",
+    "mysql2": "^3.15.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

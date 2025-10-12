@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DutyDeck - Business Management</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/master.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <div id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <i class="fas fa-clipboard-check"></i>
+        <span class="logo-text">DutyDeck</span>
+      </div>
+      <button id="sidebarToggle" class="sidebar-toggle">
+        <i class="fas fa-bars"></i>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <ul>
+        <li>
+          <a href="#" class="nav-link active" data-section="dashboard">
+            <i class="fas fa-home"></i>
+            <span class="nav-text">Dashboard</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="nav-link" data-section="businesses">
+            <i class="fas fa-building"></i>
+            <span class="nav-text">Businesses</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="nav-link" data-section="venues">
+            <i class="fas fa-map-marker-alt"></i>
+            <span class="nav-text">Venues</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="nav-link" data-section="users">
+            <i class="fas fa-users"></i>
+            <span class="nav-text">Users</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+
+  <!-- Main Content -->
+  <div id="mainContent" class="main-content">
+    <!-- Header -->
+    <header class="content-header">
+      <div class="header-left">
+        <button id="mobileToggle" class="mobile-toggle">
+          <i class="fas fa-bars"></i>
+        </button>
+        <h1 id="pageTitle">Dashboard</h1>
+      </div>
+      <div class="header-right">
+        <div class="search-box">
+          <i class="fas fa-search"></i>
+          <input type="text" placeholder="Search modules here...">
+        </div>
+        <div class="user-info">
+          <span>Master Admin</span>
+          <i class="fas fa-user-circle"></i>
+        </div>
+      </div>
+    </header>
+
+    <!-- Dashboard Section -->
+    <div id="dashboardSection" class="content-section">
+      <div class="section-content">
+        <div class="row">
+          <div class="col-md-3">
+            <div class="stat-card">
+              <div class="stat-icon">
+                <i class="fas fa-building"></i>
+              </div>
+              <div class="stat-info">
+                <h3 id="statBusinesses">0</h3>
+                <p>Total Businesses</p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stat-card">
+              <div class="stat-icon">
+                <i class="fas fa-map-marker-alt"></i>
+              </div>
+              <div class="stat-info">
+                <h3 id="statVenues">0</h3>
+                <p>Total Venues</p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stat-card">
+              <div class="stat-icon">
+                <i class="fas fa-users"></i>
+              </div>
+              <div class="stat-info">
+                <h3 id="statStaff">0</h3>
+                <p>Total Staff</p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stat-card">
+              <div class="stat-icon">
+                <i class="fas fa-clock"></i>
+              </div>
+              <div class="stat-info">
+                <h3 id="statHours">0</h3>
+                <p>Hours This Month</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Venues by State Table -->
+        <div class="row mt-4">
+          <div class="col-md-6">
+            <div class="data-table">
+              <div class="table-header">
+                <h3>Venues by State</h3>
+              </div>
+              <div class="table-content">
+                <table class="data-grid">
+                  <thead>
+                    <tr>
+                      <th>State</th>
+                      <th>Venues</th>
+                    </tr>
+                  </thead>
+                  <tbody id="venuesByState">
+                    <tr><td colspan="2" class="text-muted text-center">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Businesses Section -->
+    <div id="businessesSection" class="content-section" style="display: none;">
+      <div class="section-content">
+        <div class="section-header">
+          <h2>Business Management</h2>
+          <button class="btn btn-primary" id="showAddBusinessBtn">
+            <i class="fas fa-plus"></i> Add New Business
+          </button>
+        </div>
+
+        <!-- Add Business Form (Initially Hidden) -->
+        <div id="addBusinessForm" class="form-container" style="display: none;">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span>Add Business</span>
+              <button class="btn-close" id="hideAddBusinessBtn">×</button>
+            </div>
+            <div class="card-body">
+              <form id="businessForm">
+                <div class="mb-3">
+                  <label class="form-label">Business Code</label>
+                  <input type="text" name="code" class="form-control" maxlength="10" pattern="[0-9]+" required>
+                  <div class="form-text">Maximum 10 digits, numbers only</div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Business Name</label>
+                  <input type="text" name="name" class="form-control" required>
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="submit" class="btn btn-primary">Save Business</button>
+                  <button type="button" class="btn btn-secondary" id="cancelAddBusinessBtn">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Business List -->
+        <div id="businessList" class="data-table">
+          <div class="table-header">
+            <h3>All Businesses</h3>
+            <div class="table-actions">
+              <input type="text" class="form-control" placeholder="Search businesses...">
+            </div>
+          </div>
+          <div class="table-content">
+            <p class="text-muted text-center py-4">Loading businesses...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Venues Section -->
+    <div id="venuesSection" class="content-section" style="display: none;">
+      <div class="section-content">
+        <div class="section-header">
+          <h2>Venue + System Admin Management</h2>
+          <button class="btn btn-primary" id="showAddVenueBtn">
+            <i class="fas fa-plus"></i> Add Venue + System Admin
+          </button>
+        </div>
+
+        <!-- Add Venue Form (Initially Hidden) -->
+        <div id="addVenueForm" class="form-container" style="display: none;">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span>Add Venue + System Admin</span>
+              <button class="btn-close" id="hideAddVenueBtn">×</button>
+            </div>
+            <div class="card-body">
+              <form id="venueSysAdminForm">
+                <h5 class="mb-3">Venue Details</h5>
+                <div class="row">
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">Select Business</label>
+                      <select name="business_code" class="form-select" required>
+                        <option value="">Select Business</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">Venue Code</label>
+                      <input type="text" name="venue_code" class="form-control" maxlength="8" pattern="[0-9]+" required>
+                      <div class="form-text">Maximum 8 digits, numbers only</div>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">Venue Name</label>
+                      <input type="text" name="venue_name" class="form-control" required>
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-md-12">
+                    <div class="mb-3">
+                      <label class="form-label">Address</label>
+                      <input type="text" name="venue_address" class="form-control" required>
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">State</label>
+                      <select name="state" class="form-select" required>
+                        <option value="">Select State</option>
+                        <option value="TAS">TAS</option>
+                        <option value="NSW">NSW</option>
+                        <option value="VIC">VIC</option>
+                        <option value="QLD">QLD</option>
+                        <option value="WA">WA</option>
+                        <option value="SA">SA</option>
+                        <option value="ACT">ACT</option>
+                        <option value="NT">NT</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">Timezone</label>
+                      <select name="timezone" class="form-select" required>
+                        <option value="">Select Timezone</option>
+                        <option value="Australia/Sydney">Australia/Sydney (AEDT/AEST)</option>
+                        <option value="Australia/Melbourne">Australia/Melbourne (AEDT/AEST)</option>
+                        <option value="Australia/Brisbane">Australia/Brisbane (AEST)</option>
+                        <option value="Australia/Adelaide">Australia/Adelaide (ACDT/ACST)</option>
+                        <option value="Australia/Perth">Australia/Perth (AWST)</option>
+                        <option value="Australia/Hobart">Australia/Hobart (AEDT/AEST)</option>
+                        <option value="Australia/Darwin">Australia/Darwin (ACST)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="mb-3">
+                      <label class="form-label">Week Start</label>
+                      <select name="week_start" class="form-select" required>
+                        <option value="Mon" selected>Monday</option>
+                        <option value="Tue">Tuesday</option>
+                        <option value="Wed">Wednesday</option>
+                        <option value="Thu">Thursday</option>
+                        <option value="Fri">Friday</option>
+                        <option value="Sat">Saturday</option>
+                        <option value="Sun">Sunday</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <h5 class="mt-4 mb-3">🖥️ Kiosk Details</h5>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Venue Email</label>
+                      <input type="email" name="contact_email" class="form-control" required>
+                      <div class="form-text">Used for kiosk login</div>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Venue Password</label>
+                      <input type="password" name="kiosk_password" class="form-control" minlength="8" autocomplete="new-password" required>
+                      <div class="form-text">8+ characters minimum</div>
+                    </div>
+                  </div>
+                </div>
+
+                <h5 class="mt-4 mb-3">👤 System Admin</h5>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Staff Code</label>
+                      <input type="text" name="staff_code" class="form-control" maxlength="8" pattern="[0-9]+" required>
+                      <div class="form-text">Maximum 8 digits, numbers only</div>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">First Name</label>
+                      <input type="text" name="first_name" class="form-control" required>
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Middle Name</label>
+                      <input type="text" name="middle_name" class="form-control">
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Last Name</label>
+                      <input type="text" name="last_name" class="form-control" required>
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Personal Email</label>
+                      <input type="email" name="email" class="form-control" autocomplete="email" required>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="form-label">Password</label>
+                      <input type="password" name="password" class="form-control" minlength="8" autocomplete="new-password" required>
+                      <div class="form-text">8+ characters minimum</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                  <button type="submit" class="btn btn-success">Save Venue + System Admin</button>
+                  <button type="button" class="btn btn-secondary" id="cancelAddVenueBtn">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Venue List -->
+        <div id="venueList" class="data-table">
+          <div class="table-header">
+            <h3>All Venues</h3>
+            <div class="table-actions">
+              <input type="text" class="form-control" placeholder="Search venues...">
+            </div>
+          </div>
+          <div class="table-content">
+            <p class="text-muted text-center py-4">Loading venues...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users Section -->
+    <div id="usersSection" class="content-section" style="display: none;">
+      <div class="section-content">
+        <div class="section-header">
+          <h2>User Management</h2>
+        </div>
+        <p class="text-muted">User management is handled in the Admin Panel. This section is reserved for future master-level user operations.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar Overlay for Mobile -->
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+  <!-- Edit Business Modal -->
+  <div class="modal fade" id="editBusinessModal" tabindex="-1" aria-labelledby="editBusinessModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editBusinessModalLabel">Edit Business</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="editBusinessForm">
+            <input type="hidden" id="editBusinessCode" name="business_code">
+            <div class="mb-3">
+              <label class="form-label">Business Code</label>
+              <input type="text" id="editBusinessCodeDisplay" class="form-control" disabled>
+              <div class="form-text">Code cannot be changed</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Business Name</label>
+              <input type="text" id="editBusinessName" name="name" class="form-control" required>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveBusinessEdit()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Business Confirmation Modal -->
+  <div class="modal fade" id="deleteBusinessModal" tabindex="-1" aria-labelledby="deleteBusinessModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title" id="deleteBusinessModalLabel">Confirm Delete</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to delete this business?</p>
+          <div class="alert alert-warning">
+            <strong>Warning:</strong> This action cannot be undone. Business cannot be deleted if it has existing venues.
+          </div>
+          <p><strong>Business Code:</strong> <span id="deleteBusinessCode"></span></p>
+          <p><strong>Business Name:</strong> <span id="deleteBusinessName"></span></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger" onclick="confirmDeleteBusiness()">Delete Business</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Venue + Admin Modal -->
+  <div class="modal fade" id="editVenueModal" tabindex="-1" aria-labelledby="editVenueModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editVenueModalLabel">Edit Venue + System Admin</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="editVenueForm">
+            <input type="hidden" id="editVenueCode" name="venue_code">
+
+            <h6 class="mb-3">Venue Details</h6>
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">Venue Code</label>
+                  <input type="text" id="editVenueCodeDisplay" class="form-control" disabled>
+                  <div class="form-text">Code cannot be changed</div>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">Venue Name</label>
+                  <input type="text" id="editVenueName" name="venue_name" class="form-control" required>
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-12">
+                <div class="mb-3">
+                  <label class="form-label">Address</label>
+                  <input type="text" id="editVenueAddress" name="venue_address" class="form-control" required>
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">State</label>
+                  <select id="editVenueState" name="state" class="form-select" required>
+                    <option value="TAS">TAS</option>
+                    <option value="NSW">NSW</option>
+                    <option value="VIC">VIC</option>
+                    <option value="QLD">QLD</option>
+                    <option value="WA">WA</option>
+                    <option value="SA">SA</option>
+                    <option value="ACT">ACT</option>
+                    <option value="NT">NT</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">Timezone</label>
+                  <select id="editVenueTimezone" name="timezone" class="form-select" required>
+                    <option value="Australia/Sydney">Australia/Sydney (AEDT/AEST)</option>
+                    <option value="Australia/Melbourne">Australia/Melbourne (AEDT/AEST)</option>
+                    <option value="Australia/Brisbane">Australia/Brisbane (AEST)</option>
+                    <option value="Australia/Adelaide">Australia/Adelaide (ACDT/ACST)</option>
+                    <option value="Australia/Perth">Australia/Perth (AWST)</option>
+                    <option value="Australia/Hobart">Australia/Hobart (AEDT/AEST)</option>
+                    <option value="Australia/Darwin">Australia/Darwin (ACST)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">Week Start</label>
+                  <select id="editVenueWeekStart" name="week_start" class="form-select" required>
+                    <option value="Mon">Monday</option>
+                    <option value="Tue">Tuesday</option>
+                    <option value="Wed">Wednesday</option>
+                    <option value="Thu">Thursday</option>
+                    <option value="Fri">Friday</option>
+                    <option value="Sat">Saturday</option>
+                    <option value="Sun">Sunday</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <h6 class="mt-4 mb-3">Kiosk Details</h6>
+            <div class="mb-3">
+              <label class="form-label">Venue Email</label>
+              <input type="email" id="editVenueEmail" name="contact_email" class="form-control" required>
+            </div>
+
+            <h6 class="mt-4 mb-3">System Admin</h6>
+            <div class="row">
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">First Name</label>
+                  <input type="text" id="editAdminFirstName" name="first_name" class="form-control" required>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">Middle Name</label>
+                  <input type="text" id="editAdminMiddleName" name="middle_name" class="form-control">
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">Last Name</label>
+                  <input type="text" id="editAdminLastName" name="last_name" class="form-control" required>
+                </div>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Personal Email</label>
+              <input type="email" id="editAdminEmail" name="email" class="form-control" autocomplete="email" required>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveVenueEdit()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Venue Confirmation Modal -->
+  <div class="modal fade" id="deleteVenueModal" tabindex="-1" aria-labelledby="deleteVenueModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title" id="deleteVenueModalLabel">Confirm Delete</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to delete this venue?</p>
+          <div class="alert alert-warning">
+            <strong>Warning:</strong> This will also delete the associated system admin user and staff records. This action cannot be undone.
+          </div>
+          <p><strong>Venue Code:</strong> <span id="deleteVenueCode"></span></p>
+          <p><strong>Venue Name:</strong> <span id="deleteVenueName"></span></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger" onclick="confirmDeleteVenue()">Delete Venue</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/master.js"></script>
+</body>
+</html>

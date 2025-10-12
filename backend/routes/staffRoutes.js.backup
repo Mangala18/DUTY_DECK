@@ -1,0 +1,789 @@
+const express = require("express");
+const crypto = require("crypto");
+const db = require("../config/db");
+const router = express.Router();
+
+// ============================
+// MIDDLEWARE - Role-Based Access Control
+// ============================
+
+/**
+ * Middleware to verify user has permission to manage staff
+ * Allowed roles: system_admin, manager, supervisor
+ */
+function requireStaffManagementAccess(req, res, next) {
+  // In a real application, you would get this from session/JWT token
+  // For now, we'll expect it to be passed in headers or body
+  const { user_access_level, user_business_code, user_venue_code } = req.headers;
+
+  if (!user_access_level) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized: Access level required"
+    });
+  }
+
+  // Check if user has staff management permissions
+  const allowedRoles = ['system_admin', 'manager', 'supervisor'];
+  if (!allowedRoles.includes(user_access_level)) {
+    return res.status(403).json({
+      success: false,
+      error: "Forbidden: Insufficient permissions to manage staff"
+    });
+  }
+
+  // Attach user context to request for use in route handlers
+  req.userContext = {
+    access_level: user_access_level,
+    business_code: user_business_code,
+    venue_code: user_venue_code
+  };
+
+  next();
+}
+
+/**
+ * Helper function to build WHERE clause based on user role
+ */
+function buildAccessFilter(userContext, filters = {}) {
+  const conditions = [];
+  const params = [];
+
+  // System admins can see all venue staff in their business
+  // Managers can only see staff in their venue
+  // Supervisors can only see staff in their venue
+
+  if (userContext.access_level === 'system_admin') {
+    // System admin: filter by business, all venues
+    if (userContext.business_code) {
+      conditions.push('s.business_code = ?');
+      params.push(userContext.business_code);
+    }
+  } else if (userContext.access_level === 'manager' || userContext.access_level === 'supervisor') {
+    // Manager/Supervisor: filter by their specific venue
+    if (userContext.venue_code) {
+      conditions.push('s.venue_code = ?');
+      params.push(userContext.venue_code);
+    }
+    if (userContext.business_code) {
+      conditions.push('s.business_code = ?');
+      params.push(userContext.business_code);
+    }
+  }
+
+  // Always exclude system admins from the list (only show venue_staff)
+  conditions.push("s.staff_type = 'venue_staff'");
+
+  // Apply additional filters
+  if (filters.venue_code && filters.venue_code !== 'all') {
+    conditions.push('s.venue_code = ?');
+    params.push(filters.venue_code);
+  }
+
+  if (filters.status && filters.status !== 'all') {
+    conditions.push('s.employment_status = ?');
+    params.push(filters.status);
+  }
+
+  return { conditions, params };
+}
+
+/**
+ * Helper to rollback transaction and send error response
+ */
+function rollbackAndRespond(connection, error, errorCode, errorMessage, res) {
+  connection.rollback(() => {
+    connection.release();
+    if (error) console.error(errorMessage, error);
+    res.status(errorCode).json({ success: false, error: errorMessage });
+  });
+}
+
+/**
+ * Helper to verify user has access to a staff member
+ */
+function verifyStaffAccess(staff_code, userContext, callback) {
+  const { conditions, params } = buildAccessFilter(userContext);
+  const checkQuery = `SELECT venue_code FROM staff WHERE staff_code = ? AND ${conditions.join(' AND ')}`;
+  params.unshift(staff_code);
+
+  db.query(checkQuery, params, (err, results) => {
+    if (err) {
+      return callback(err, null);
+    }
+    if (results.length === 0) {
+      return callback(new Error('Access denied'), null);
+    }
+    callback(null, results[0]);
+  });
+}
+
+// ============================
+// VENUE MANAGEMENT
+// ============================
+
+// Get all venues accessible to the user
+router.get("/venues", requireStaffManagementAccess, (req, res) => {
+  const { userContext } = req;
+
+  let query = `
+    SELECT
+      venue_code,
+      venue_name,
+      venue_address,
+      state,
+      status
+    FROM venues
+    WHERE status = 'active'
+  `;
+
+  const params = [];
+
+  // Filter by business
+  if (userContext.business_code) {
+    query += ' AND business_code = ?';
+    params.push(userContext.business_code);
+  }
+
+  // Managers and supervisors can only see their own venue
+  if (userContext.access_level !== 'system_admin' && userContext.venue_code) {
+    query += ' AND venue_code = ?';
+    params.push(userContext.venue_code);
+  }
+
+  query += ' ORDER BY venue_name ASC';
+
+  db.query(query, params, (err, results) => {
+    if (err) {
+      console.error("Error fetching venues:", err);
+      return res.status(500).json({ success: false, error: "Failed to fetch venues" });
+    }
+    res.json({ success: true, data: results });
+  });
+});
+
+// ============================
+// STAFF MANAGEMENT
+// ============================
+
+// Get all staff with role-based filtering
+router.get("/", requireStaffManagementAccess, (req, res) => {
+  const { userContext } = req;
+  const { venue_code, status } = req.query;
+
+  // Build access filter based on user role
+  const { conditions, params } = buildAccessFilter(userContext, { venue_code, status });
+
+  const query = `
+    SELECT
+      s.staff_code,
+      CONCAT(s.first_name, ' ', IFNULL(CONCAT(s.middle_name, ' '), ''), s.last_name) AS full_name,
+      s.first_name,
+      s.middle_name,
+      s.last_name,
+      s.phone_number,
+      s.role_title,
+      s.employment_status,
+      s.employment_type,
+      s.start_date,
+      v.venue_name,
+      v.venue_code,
+      b.business_name,
+      b.business_code,
+      u.email,
+      u.access_level,
+      s.created_at
+    FROM staff s
+    LEFT JOIN venues v ON s.venue_code = v.venue_code
+    LEFT JOIN businesses b ON s.business_code = b.business_code
+    LEFT JOIN users u ON s.staff_code = u.staff_code
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY s.created_at DESC
+  `;
+
+  db.query(query, params, (err, results) => {
+    if (err) {
+      console.error("Error fetching staff:", err);
+      return res.status(500).json({ success: false, error: "Failed to fetch staff" });
+    }
+    res.json({ success: true, data: results });
+  });
+});
+
+// Get single staff member details
+router.get("/:staff_code", requireStaffManagementAccess, (req, res) => {
+  const { staff_code } = req.params;
+  const { userContext } = req;
+
+  // Build access filter to ensure user can only access staff they have permission for
+  const { conditions, params } = buildAccessFilter(userContext);
+
+  const query = `
+    SELECT
+      s.*,
+      v.venue_name,
+      b.business_name,
+      u.email,
+      u.access_level,
+      u.kiosk_pin,
+      pr.weekday_rate,
+      pr.saturday_rate,
+      pr.sunday_rate,
+      pr.public_holiday_rate,
+      pr.overtime_rate,
+      pr.default_hours,
+      sc.account_holder_name,
+      sc.bank_name,
+      sc.bank_bsb,
+      sc.bank_account_number
+    FROM staff s
+    LEFT JOIN venues v ON s.venue_code = v.venue_code
+    LEFT JOIN businesses b ON s.business_code = b.business_code
+    LEFT JOIN users u ON s.staff_code = u.staff_code
+    LEFT JOIN pay_rates pr ON s.staff_code = pr.staff_code
+    LEFT JOIN staff_compliance sc ON s.staff_code = sc.staff_code
+    WHERE s.staff_code = ? AND ${conditions.join(' AND ')}
+  `;
+
+  params.unshift(staff_code);
+
+  db.query(query, params, (err, results) => {
+    if (err) {
+      console.error("Error fetching staff:", err);
+      return res.status(500).json({ success: false, error: "Failed to fetch staff" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ success: false, error: "Staff not found or access denied" });
+    }
+
+    res.json({ success: true, data: results[0] });
+  });
+});
+
+// Add new staff member with role-based restrictions
+router.post("/", requireStaffManagementAccess, (req, res) => {
+  const { userContext } = req;
+  const {
+    // Staff Details
+    venue_code,
+    staff_code,
+    first_name,
+    middle_name,
+    last_name,
+    email,
+    phone_number,
+    password,
+    access_level,
+    role_title,
+    employment_type,
+    start_date,
+    // Pay Rates
+    weekday_rate,
+    saturday_rate,
+    sunday_rate,
+    public_holiday_rate,
+    overtime_rate,
+    default_hours,
+    // Banking Details (Compliance)
+    account_holder_name,
+    bank_name,
+    bank_bsb,
+    bank_account_number
+  } = req.body;
+
+  // Determine business_code and validate venue_code based on user role
+  let business_code = userContext.business_code;
+  let final_venue_code = venue_code;
+
+  // Validate access based on role
+  if (userContext.access_level === 'manager' || userContext.access_level === 'supervisor') {
+    // Managers/Supervisors can only add staff to their own venue
+    if (venue_code !== userContext.venue_code) {
+      return res.status(403).json({
+        success: false,
+        error: "You can only add staff to your own venue"
+      });
+    }
+    final_venue_code = userContext.venue_code;
+  } else if (userContext.access_level === 'system_admin') {
+    // System admin can add to any venue in their business
+    if (!venue_code) {
+      return res.status(400).json({
+        success: false,
+        error: "venue_code is required for system admins"
+      });
+    }
+  }
+
+  // Validate required fields
+  if (!business_code || !final_venue_code || !staff_code || !first_name || !last_name || !email || !password || !access_level) {
+    return res.status(400).json({
+      success: false,
+      error: "Missing required fields: business_code, venue_code, staff_code, first_name, last_name, email, password, access_level"
+    });
+  }
+
+  // Managers and supervisors cannot create system_admin or manager accounts
+  if (userContext.access_level === 'supervisor' && ['system_admin', 'manager'].includes(access_level)) {
+    return res.status(403).json({
+      success: false,
+      error: "Supervisors cannot create manager or system admin accounts"
+    });
+  }
+
+  if (userContext.access_level === 'manager' && access_level === 'system_admin') {
+    return res.status(403).json({
+      success: false,
+      error: "Managers cannot create system admin accounts"
+    });
+  }
+
+  const username = email; // Use email as username
+
+  // Start transaction
+  db.getConnection((err, connection) => {
+    if (err) {
+      console.error("Error getting connection:", err);
+      return res.status(500).json({ success: false, error: "Database connection failed" });
+    }
+
+    connection.beginTransaction((err) => {
+      if (err) {
+        connection.release();
+        console.error("Error starting transaction:", err);
+        return res.status(500).json({ success: false, error: "Failed to start transaction" });
+      }
+
+      // 1. Insert staff record
+      const staffQuery = `
+        INSERT INTO staff (
+          staff_code, business_code, venue_code,
+          first_name, middle_name, last_name,
+          phone_number,
+          role_title, employment_type, employment_status, staff_type, start_date
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'venue_staff', ?)
+      `;
+
+      connection.query(
+        staffQuery,
+        [
+          staff_code, business_code, final_venue_code,
+          first_name, middle_name, last_name,
+          phone_number,
+          role_title, employment_type, start_date
+        ],
+        (err, staffResult) => {
+          if (err) {
+            const errorCode = err.code === 'ER_DUP_ENTRY' ? 409 : 500;
+            const errorMsg = err.code === 'ER_DUP_ENTRY' ? "Staff code already exists" : "Failed to create staff record";
+            return rollbackAndRespond(connection, err, errorCode, errorMsg, res);
+          }
+
+          // 2. Insert pay_rates record
+          const payRatesQuery = `
+            INSERT INTO pay_rates (
+              staff_code, default_hours,
+              weekday_rate, saturday_rate, sunday_rate,
+              public_holiday_rate, overtime_rate
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `;
+
+          connection.query(
+            payRatesQuery,
+            [
+              staff_code,
+              default_hours || 38.00,
+              weekday_rate || 0.00,
+              saturday_rate || 0.00,
+              sunday_rate || 0.00,
+              public_holiday_rate || 0.00,
+              overtime_rate || 0.00
+            ],
+            (err, ratesResult) => {
+              if (err) {
+                return rollbackAndRespond(connection, err, 500, "Failed to create pay rates", res);
+              }
+
+              // 3. Insert staff_compliance record
+              const complianceQuery = `
+                INSERT INTO staff_compliance (
+                  staff_code, account_holder_name, bank_name, bank_bsb, bank_account_number
+                )
+                VALUES (?, ?, ?, ?, ?)
+              `;
+
+              connection.query(
+                complianceQuery,
+                [
+                  staff_code,
+                  account_holder_name || null,
+                  bank_name || null,
+                  bank_bsb || null,
+                  bank_account_number || null
+                ],
+                (err, complianceResult) => {
+                  if (err) {
+                    return rollbackAndRespond(connection, err, 500, "Failed to create compliance record", res);
+                  }
+
+                  // 4. Insert user record with auto-generated kiosk PIN
+                  insertUserWithUniquePin(connection, username, password, access_level, staff_code, res);
+                }
+              );
+            }
+          );
+        }
+      );
+    });
+  });
+});
+
+// Helper function for inserting user with unique PIN
+function insertUserWithUniquePin(connection, username, password_hash, access_level, staff_code, res, attemptCount = 0) {
+  if (attemptCount > 5) {
+    return rollbackAndRespond(connection, null, 500, "Failed to generate unique kiosk PIN after multiple attempts", res);
+  }
+
+  const generateKioskPin = () => crypto.randomInt(100000, 999999).toString();
+  const kiosk_pin = generateKioskPin();
+
+  const userQuery = `
+    INSERT INTO users (email, password_hash, kiosk_pin, access_level, status, staff_code)
+    VALUES (?, ?, ?, ?, 'active', ?)
+  `;
+
+  connection.query(
+    userQuery,
+    [username, password_hash, kiosk_pin, access_level, staff_code],
+    (err, userResult) => {
+      if (err) {
+        // If duplicate PIN, retry with new PIN
+        if (err.code === 'ER_DUP_ENTRY' && err.message.includes('kiosk_pin')) {
+          console.log(`Kiosk PIN collision detected, regenerating... (attempt ${attemptCount + 1})`);
+          return insertUserWithUniquePin(connection, username, password_hash, access_level, staff_code, res, attemptCount + 1);
+        }
+
+        const errorCode = err.code === 'ER_DUP_ENTRY' ? 409 : 500;
+        const errorMsg = err.code === 'ER_DUP_ENTRY' ? "Username/email already exists" : "Failed to create user account";
+        return rollbackAndRespond(connection, err, errorCode, errorMsg, res);
+      }
+
+      connection.commit((err) => {
+        if (err) {
+          return rollbackAndRespond(connection, err, 500, "Failed to save staff member", res);
+        }
+
+        connection.release();
+        res.json({
+          success: true,
+          staff: {
+            staff_code,
+          },
+          user: {
+            user_id: userResult.insertId,
+            username,
+            kiosk_pin
+          }
+        });
+      });
+    }
+  );
+}
+
+// Update staff member (with role-based access control)
+router.put("/:staff_code", requireStaffManagementAccess, (req, res) => {
+  const { staff_code } = req.params;
+  const { userContext } = req;
+
+  verifyStaffAccess(staff_code, userContext, (err) => {
+    if (err) {
+      const statusCode = err.message === 'Access denied' ? 404 : 500;
+      const errorMsg = err.message === 'Access denied' ? "Staff not found or access denied" : "Failed to verify access";
+      return res.status(statusCode).json({ success: false, error: errorMsg });
+    }
+    updateStaff(staff_code, req.body, userContext, res);
+  });
+});
+
+// Update staff function (shared logic)
+function updateStaff(staff_code, updateData, userContext, res) {
+  const {
+    first_name,
+    middle_name,
+    last_name,
+    phone_number,
+    role_title,
+    employment_type,
+    employment_status,
+    start_date,
+    access_level,
+    password,
+    email,
+    kiosk_pin,
+    weekday_rate,
+    saturday_rate,
+    sunday_rate,
+    public_holiday_rate,
+    overtime_rate,
+    default_hours,
+    account_holder_name,
+    bank_name,
+    bank_bsb,
+    bank_account_number
+  } = updateData;
+
+  // Role validation: prevent privilege escalation
+  if (access_level) {
+    if (userContext.access_level === 'supervisor' && ['system_admin', 'manager'].includes(access_level)) {
+      return res.status(403).json({
+        success: false,
+        error: "Supervisors cannot grant manager or system admin privileges"
+      });
+    }
+    if (userContext.access_level === 'manager' && access_level === 'system_admin') {
+      return res.status(403).json({
+        success: false,
+        error: "Managers cannot grant system admin privileges"
+      });
+    }
+  }
+
+  // Start transaction
+  db.getConnection((err, connection) => {
+    if (err) {
+      console.error("Error getting connection:", err);
+      return res.status(500).json({ success: false, error: "Database connection failed" });
+    }
+
+    connection.beginTransaction((err) => {
+      if (err) {
+        connection.release();
+        console.error("Error starting transaction:", err);
+        return res.status(500).json({ success: false, error: "Failed to start transaction" });
+      }
+
+      // Build update query for staff table
+      const staffUpdates = [];
+      const staffParams = [];
+
+      if (first_name !== undefined) {
+        staffUpdates.push('first_name = ?');
+        staffParams.push(first_name);
+      }
+      if (middle_name !== undefined) {
+        staffUpdates.push('middle_name = ?');
+        staffParams.push(middle_name);
+      }
+      if (last_name !== undefined) {
+        staffUpdates.push('last_name = ?');
+        staffParams.push(last_name);
+      }
+      if (phone_number !== undefined) {
+        staffUpdates.push('phone_number = ?');
+        staffParams.push(phone_number);
+      }
+      if (role_title !== undefined) {
+        staffUpdates.push('role_title = ?');
+        staffParams.push(role_title);
+      }
+      if (employment_type !== undefined) {
+        staffUpdates.push('employment_type = ?');
+        staffParams.push(employment_type);
+      }
+      if (employment_status !== undefined) {
+        staffUpdates.push('employment_status = ?');
+        staffParams.push(employment_status);
+      }
+      if (start_date !== undefined) {
+        staffUpdates.push('start_date = ?');
+        staffParams.push(start_date);
+      }
+
+      staffParams.push(staff_code);
+
+      // Helper functions for updating related tables
+      const updatePayRates = (callback) => {
+        const rateUpdates = [];
+        const rateParams = [];
+
+        if (weekday_rate !== undefined) {
+          rateUpdates.push('weekday_rate = ?');
+          rateParams.push(weekday_rate);
+        }
+        if (saturday_rate !== undefined) {
+          rateUpdates.push('saturday_rate = ?');
+          rateParams.push(saturday_rate);
+        }
+        if (sunday_rate !== undefined) {
+          rateUpdates.push('sunday_rate = ?');
+          rateParams.push(sunday_rate);
+        }
+        if (public_holiday_rate !== undefined) {
+          rateUpdates.push('public_holiday_rate = ?');
+          rateParams.push(public_holiday_rate);
+        }
+        if (overtime_rate !== undefined) {
+          rateUpdates.push('overtime_rate = ?');
+          rateParams.push(overtime_rate);
+        }
+        if (default_hours !== undefined) {
+          rateUpdates.push('default_hours = ?');
+          rateParams.push(default_hours);
+        }
+
+        if (rateUpdates.length > 0) {
+          rateParams.push(staff_code);
+          const ratesQuery = `UPDATE pay_rates SET ${rateUpdates.join(', ')} WHERE staff_code = ?`;
+          connection.query(ratesQuery, rateParams, callback);
+        } else {
+          callback(null);
+        }
+      };
+
+      const updateCompliance = (callback) => {
+        const complianceUpdates = [];
+        const complianceParams = [];
+
+        if (account_holder_name !== undefined) {
+          complianceUpdates.push('account_holder_name = ?');
+          complianceParams.push(account_holder_name);
+        }
+        if (bank_name !== undefined) {
+          complianceUpdates.push('bank_name = ?');
+          complianceParams.push(bank_name);
+        }
+        if (bank_bsb !== undefined) {
+          complianceUpdates.push('bank_bsb = ?');
+          complianceParams.push(bank_bsb);
+        }
+        if (bank_account_number !== undefined) {
+          complianceUpdates.push('bank_account_number = ?');
+          complianceParams.push(bank_account_number);
+        }
+
+        if (complianceUpdates.length > 0) {
+          const complianceQuery = `
+            INSERT INTO staff_compliance (staff_code, account_holder_name, bank_name, bank_bsb, bank_account_number)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE ${complianceUpdates.join(', ')}
+          `;
+          connection.query(
+            complianceQuery,
+            [staff_code, account_holder_name, bank_name, bank_bsb, bank_account_number],
+            callback
+          );
+        } else {
+          callback(null);
+        }
+      };
+
+      const updateUser = (callback) => {
+        const userUpdates = [];
+        const userParams = [];
+
+        if (access_level !== undefined) {
+          userUpdates.push('access_level = ?');
+          userParams.push(access_level);
+        }
+        if (password !== undefined && password !== '') {
+          userUpdates.push('password_hash = ?');
+          userParams.push(password);
+        }
+        if (email !== undefined) {
+          userUpdates.push('email = ?');
+          userParams.push(email);
+        }
+        if (kiosk_pin !== undefined && kiosk_pin !== '') {
+          userUpdates.push('kiosk_pin = ?');
+          userParams.push(kiosk_pin);
+        }
+
+        if (userUpdates.length > 0) {
+          userParams.push(staff_code);
+          const userQuery = `UPDATE users SET ${userUpdates.join(', ')} WHERE staff_code = ?`;
+          connection.query(userQuery, userParams, callback);
+        } else {
+          callback(null);
+        }
+      };
+
+      // Helper to run all updates in sequence
+      const runAllUpdates = (callback) => {
+        updatePayRates((err) => {
+          if (err) return rollbackAndRespond(connection, err, 500, "Failed to update pay rates", res);
+
+          updateCompliance((err) => {
+            if (err) return rollbackAndRespond(connection, err, 500, "Failed to update compliance", res);
+
+            updateUser((err) => {
+              if (err) return rollbackAndRespond(connection, err, 500, "Failed to update user", res);
+              callback();
+            });
+          });
+        });
+      };
+
+      // Execute staff update if needed, then run other updates
+      if (staffUpdates.length > 0) {
+        const staffQuery = `UPDATE staff SET ${staffUpdates.join(', ')} WHERE staff_code = ?`;
+        connection.query(staffQuery, staffParams, (err) => {
+          if (err) return rollbackAndRespond(connection, err, 500, "Failed to update staff", res);
+          runAllUpdates(() => {
+            connection.commit((err) => {
+              if (err) return rollbackAndRespond(connection, err, 500, "Failed to commit changes", res);
+              connection.release();
+              res.json({ success: true, message: "Staff updated successfully" });
+            });
+          });
+        });
+      } else {
+        // Only secondary tables to update
+        runAllUpdates(() => {
+          connection.commit((err) => {
+            if (err) return rollbackAndRespond(connection, err, 500, "Failed to commit changes", res);
+            connection.release();
+            res.json({ success: true, message: "Staff updated successfully" });
+          });
+        });
+      }
+    });
+  });
+}
+
+// Delete staff member (soft delete with role-based access)
+router.delete("/:staff_code", requireStaffManagementAccess, (req, res) => {
+  const { staff_code } = req.params;
+  const { userContext } = req;
+
+  verifyStaffAccess(staff_code, userContext, (err) => {
+    if (err) {
+      const statusCode = err.message === 'Access denied' ? 404 : 500;
+      const errorMsg = err.message === 'Access denied' ? "Staff not found or access denied" : "Failed to verify access";
+      return res.status(statusCode).json({ success: false, error: errorMsg });
+    }
+
+    const deleteQuery = `
+      UPDATE staff
+      SET employment_status = 'terminated'
+      WHERE staff_code = ? AND staff_type = 'venue_staff'
+    `;
+
+    db.query(deleteQuery, [staff_code], (err, result) => {
+      if (err) {
+        console.error("Error deleting staff:", err);
+        return res.status(500).json({ success: false, error: "Failed to delete staff" });
+      }
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, error: "Staff not found" });
+      }
+
+      res.json({ success: true, message: "Staff deleted successfully" });
+    });
+  });
+});
+
+module.exports = router;

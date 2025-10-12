@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Utility Test Page</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Frontend Utilities Test Page</h1>
+
+        <!-- Storage Tests -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Storage Utility Tests</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary me-2" id="testStorageSet">Set Test User</button>
+                <button class="btn btn-secondary me-2" id="testStorageGet">Get User</button>
+                <button class="btn btn-warning me-2" id="testStorageClear">Clear User</button>
+                <button class="btn btn-info me-2" id="testStorageCheck">Check Login Status</button>
+                <div id="storageResult" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- UI Tests -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>UI Utility Tests</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-success me-2" id="testToastSuccess">Success Toast</button>
+                <button class="btn btn-danger me-2" id="testToastError">Error Toast</button>
+                <button class="btn btn-warning me-2" id="testToastWarning">Warning Toast</button>
+                <button class="btn btn-info me-2" id="testToastInfo">Info Toast</button>
+                <button class="btn btn-primary me-2" id="testLoadingShow">Show Loading (Manual)</button>
+                <button class="btn btn-success me-2" id="testLoadingShowAuto">Show Loading (Auto-hide 3s)</button>
+                <button class="btn btn-secondary me-2" id="testLoadingHide">Hide Loading Overlay</button>
+                <div id="uiTestTarget" class="mt-3 p-3 border"></div>
+            </div>
+        </div>
+
+        <!-- API Tests -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>API Utility Tests</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary me-2" id="testApiVenues">GET /api/system-admin/staff/venues</button>
+                <button class="btn btn-success me-2" id="testApiStaff">GET /api/system-admin/staff</button>
+                <button class="btn btn-warning me-2" id="testApiLogin">POST /api/login (fail test)</button>
+                <button class="btn btn-danger me-2" id="testApiError">Test Error Handling</button>
+                <div id="apiResult" class="mt-3 p-3 border bg-light" style="max-height: 300px; overflow-y: auto;">
+                    <pre id="apiResultContent"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module">
+        import { apiRequest, api } from './js/utils/api.js';
+        import { Storage } from './js/utils/storage.js';
+        import { showToast, showLoading, renderError, Loading, showEmptyState } from './js/utils/ui.js';
+
+        // Storage Tests
+        document.getElementById('testStorageSet').addEventListener('click', () => {
+            const testUser = {
+                id: 1,
+                username: 'test@example.com',
+                first_name: 'Test',
+                last_name: 'User',
+                access_level: 'system_admin',
+                business_code: 'BIZ001',
+                venue_code: 'VEN001'
+            };
+            Storage.setUser(testUser);
+            document.getElementById('storageResult').innerHTML =
+                '<div class="alert alert-success">Test user saved to localStorage</div>';
+        });
+
+        document.getElementById('testStorageGet').addEventListener('click', () => {
+            const user = Storage.getUser();
+            document.getElementById('storageResult').innerHTML =
+                '<div class="alert alert-info"><pre>' + JSON.stringify(user, null, 2) + '</pre></div>';
+        });
+
+        document.getElementById('testStorageClear').addEventListener('click', () => {
+            Storage.clearUser();
+            document.getElementById('storageResult').innerHTML =
+                '<div class="alert alert-warning">User cleared from localStorage</div>';
+        });
+
+        document.getElementById('testStorageCheck').addEventListener('click', () => {
+            const isLoggedIn = Storage.isLoggedIn();
+            const fullName = Storage.getUserFullName();
+            document.getElementById('storageResult').innerHTML =
+                `<div class="alert alert-${isLoggedIn ? 'success' : 'danger'}">
+                    Logged in: ${isLoggedIn}<br>
+                    Full name: ${fullName}
+                </div>`;
+        });
+
+        // UI Tests
+        document.getElementById('testToastSuccess').addEventListener('click', () => {
+            showToast('This is a success message!', 'success');
+        });
+
+        document.getElementById('testToastError').addEventListener('click', () => {
+            showToast('This is an error message!', 'error');
+        });
+
+        document.getElementById('testToastWarning').addEventListener('click', () => {
+            showToast('This is a warning message!', 'warning');
+        });
+
+        document.getElementById('testToastInfo').addEventListener('click', () => {
+            showToast('This is an info message!', 'info');
+        });
+
+        document.getElementById('testLoadingShow').addEventListener('click', () => {
+            Loading.show('Testing global loading overlay... (Click "Hide" to dismiss)');
+        });
+
+        document.getElementById('testLoadingShowAuto').addEventListener('click', () => {
+            Loading.show('Auto-hiding in 3 seconds...', 3000);
+        });
+
+        document.getElementById('testLoadingHide').addEventListener('click', () => {
+            Loading.hide();
+        });
+
+        // API Tests
+        document.getElementById('testApiVenues').addEventListener('click', async () => {
+            try {
+                showLoading('apiResultContent', 'Fetching venues...');
+                const result = await apiRequest('/system-admin/staff/venues');
+                document.getElementById('apiResultContent').textContent = JSON.stringify(result, null, 2);
+                showToast('Venues loaded successfully', 'success');
+            } catch (err) {
+                document.getElementById('apiResultContent').textContent = 'Error: ' + err.message;
+                showToast('Failed to load venues: ' + err.message, 'error');
+            }
+        });
+
+        document.getElementById('testApiStaff').addEventListener('click', async () => {
+            try {
+                showLoading('apiResultContent', 'Fetching staff...');
+                const result = await api.get('/system-admin/staff');
+                document.getElementById('apiResultContent').textContent = JSON.stringify(result, null, 2);
+                showToast('Staff loaded successfully', 'success');
+            } catch (err) {
+                document.getElementById('apiResultContent').textContent = 'Error: ' + err.message;
+                showToast('Failed to load staff: ' + err.message, 'error');
+            }
+        });
+
+        document.getElementById('testApiLogin').addEventListener('click', async () => {
+            try {
+                const result = await api.post('/login', {
+                    username: 'wrong',
+                    password: 'wrong'
+                });
+                document.getElementById('apiResultContent').textContent = JSON.stringify(result, null, 2);
+            } catch (err) {
+                document.getElementById('apiResultContent').textContent = 'Expected error: ' + err.message;
+                showToast('Login failed (expected): ' + err.message, 'warning');
+            }
+        });
+
+        document.getElementById('testApiError').addEventListener('click', async () => {
+            try {
+                const result = await apiRequest('/nonexistent-endpoint');
+                document.getElementById('apiResultContent').textContent = JSON.stringify(result, null, 2);
+            } catch (err) {
+                document.getElementById('apiResultContent').textContent = 'Error handled: ' + err.message +
+                    '\nStatus: ' + (err.status || 'N/A');
+                showToast('Error handling test complete', 'info');
+            }
+        });
+
+        // Initialize with a welcome message
+        showToast('Utility test page loaded successfully', 'success');
+    </script>
+</body>
+</html>

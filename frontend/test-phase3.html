@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phase 3 Stage 1 - Integration Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .test-section {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-section h3 {
+            color: #0d6efd;
+            margin-bottom: 15px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .test-result.success {
+            background-color: #d1e7dd;
+            border: 1px solid #badbcc;
+            color: #0f5132;
+        }
+        .test-result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c2c7;
+            color: #842029;
+        }
+        .test-result.pending {
+            background-color: #fff3cd;
+            border: 1px solid #ffecb5;
+            color: #664d03;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <h1 class="mb-4">Phase 3 Stage 1 - Integration Test Suite</h1>
+        <p class="text-muted mb-4">Testing validation, confirmation dialogs, field errors, 401 handling, and network detection</p>
+
+        <!-- Validator Tests -->
+        <div class="test-section">
+            <h3><i class="bi bi-check-circle"></i> Validator Tests</h3>
+            <div id="validatorResults"></div>
+            <button id="runValidatorTests" class="btn btn-primary mt-2">Run Validator Tests</button>
+        </div>
+
+        <!-- Field Error Tests -->
+        <div class="test-section">
+            <h3><i class="bi bi-exclamation-triangle"></i> Field Error Display Tests</h3>
+            <form id="testForm">
+                <div class="mb-3">
+                    <label for="testEmail" class="form-label">Email</label>
+                    <input type="text" class="form-control" id="testEmail" value="">
+                </div>
+                <div class="mb-3">
+                    <label for="testStaffCode" class="form-label">Staff Code</label>
+                    <input type="text" class="form-control" id="testStaffCode" value="">
+                </div>
+                <div class="mb-3">
+                    <label for="testBSB" class="form-label">BSB</label>
+                    <input type="text" class="form-control" id="testBSB" value="">
+                </div>
+                <button type="button" id="showFieldErrors" class="btn btn-danger">Show Field Errors</button>
+                <button type="button" id="clearErrors" class="btn btn-secondary">Clear Errors</button>
+            </form>
+        </div>
+
+        <!-- Confirmation Dialog Tests -->
+        <div class="test-section">
+            <h3><i class="bi bi-question-circle"></i> Confirmation Dialog Tests</h3>
+            <button id="testConfirmDialog" class="btn btn-warning">Test Confirm Dialog</button>
+            <button id="testMultipleDialogs" class="btn btn-warning">Test Multiple Dialogs (Memory Leak Check)</button>
+            <div id="dialogResults" class="mt-3"></div>
+        </div>
+
+        <!-- API 401 Handler Test -->
+        <div class="test-section">
+            <h3><i class="bi bi-shield-exclamation"></i> API 401 Auto-Logout Test</h3>
+            <p class="text-muted">Note: This will trigger a mock 401 response and test the auto-logout flow</p>
+            <button id="test401Handler" class="btn btn-danger">Test 401 Handler</button>
+            <div id="apiResults" class="mt-3"></div>
+        </div>
+
+        <!-- Network Detection Test -->
+        <div class="test-section">
+            <h3><i class="bi bi-wifi"></i> Network Detection Test</h3>
+            <p class="text-muted">Current status: <strong id="networkStatus">Online</strong></p>
+            <p class="text-muted small">Manually toggle your network connection to test offline/online detection</p>
+            <div id="networkResults"></div>
+        </div>
+
+        <!-- Dirty Form Detection Test -->
+        <div class="test-section">
+            <h3><i class="bi bi-pen"></i> Dirty Form Detection Test</h3>
+            <form id="dirtyTestForm">
+                <div class="mb-3">
+                    <label for="dirtyField" class="form-label">Test Field</label>
+                    <input type="text" class="form-control" id="dirtyField">
+                </div>
+            </form>
+            <p class="text-muted small">Type in the field above, then try to refresh the page to test beforeunload warning</p>
+            <div id="dirtyFormResults"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module">
+        import { Validator } from './js/utils/validator.js';
+        import { showFieldError, clearFieldErrors, showToast } from './js/utils/ui.js';
+        import { confirmAction } from './js/utils/dialog.js';
+        import { api } from './js/utils/api.js';
+
+        // Update network status display
+        function updateNetworkStatus() {
+            const statusEl = document.getElementById('networkStatus');
+            statusEl.textContent = navigator.onLine ? 'Online' : 'Offline';
+            statusEl.className = navigator.onLine ? 'text-success' : 'text-danger';
+        }
+
+        // Network detection listeners
+        window.addEventListener('online', () => {
+            updateNetworkStatus();
+            const resultsEl = document.getElementById('networkResults');
+            resultsEl.innerHTML = '<div class="test-result success">✓ Online event detected</div>';
+        });
+
+        window.addEventListener('offline', () => {
+            updateNetworkStatus();
+            const resultsEl = document.getElementById('networkResults');
+            resultsEl.innerHTML = '<div class="test-result error">✓ Offline event detected</div>';
+        });
+
+        updateNetworkStatus();
+
+        // Validator Tests
+        document.getElementById('runValidatorTests').addEventListener('click', () => {
+            const resultsEl = document.getElementById('validatorResults');
+            const tests = [
+                { name: 'Email: valid@email.com', test: () => Validator.isEmail('valid@email.com'), expected: true },
+                { name: 'Email: invalid', test: () => Validator.isEmail('invalid'), expected: false },
+                { name: 'BSB: 123-456', test: () => Validator.isBSB('123-456'), expected: true },
+                { name: 'BSB: 123456', test: () => Validator.isBSB('123456'), expected: true },
+                { name: 'BSB: invalid', test: () => Validator.isBSB('invalid'), expected: false },
+                { name: 'Staff Code: ABC123', test: () => Validator.isStaffCode('ABC123'), expected: true },
+                { name: 'Staff Code: ab', test: () => Validator.isStaffCode('ab'), expected: false },
+                { name: 'Positive Number: 25.50', test: () => Validator.isPositiveNumber('25.50'), expected: true },
+                { name: 'Positive Number: -5', test: () => Validator.isPositiveNumber('-5'), expected: false },
+                { name: 'Required: "test"', test: () => Validator.required('test'), expected: true },
+                { name: 'Required: ""', test: () => Validator.required(''), expected: false },
+                { name: 'Min Length: "hello" >= 3', test: () => Validator.minLength('hello', 3), expected: true },
+                { name: 'Min Length: "hi" >= 3', test: () => Validator.minLength('hi', 3), expected: false }
+            ];
+
+            let html = '';
+            let passed = 0;
+            let failed = 0;
+
+            tests.forEach(({ name, test, expected }) => {
+                const result = test();
+                const success = result === expected;
+                if (success) passed++; else failed++;
+                html += `<div class="test-result ${success ? 'success' : 'error'}">
+                    ${success ? '✓' : '✗'} ${name} → ${result} ${success ? '' : `(expected ${expected})`}
+                </div>`;
+            });
+
+            html = `<div class="mb-2"><strong>Results: ${passed} passed, ${failed} failed</strong></div>` + html;
+            resultsEl.innerHTML = html;
+        });
+
+        // Field Error Tests
+        document.getElementById('showFieldErrors').addEventListener('click', () => {
+            showFieldError('testEmail', 'Invalid email format');
+            showFieldError('testStaffCode', 'Staff code must be 3-25 alphanumeric characters');
+            showFieldError('testBSB', 'Invalid BSB format (XXX-XXX)');
+            showToast('Field errors displayed', 'info');
+        });
+
+        document.getElementById('clearErrors').addEventListener('click', () => {
+            clearFieldErrors('testForm');
+            showToast('Field errors cleared', 'success');
+        });
+
+        // Confirmation Dialog Tests
+        document.getElementById('testConfirmDialog').addEventListener('click', async () => {
+            const resultsEl = document.getElementById('dialogResults');
+            resultsEl.innerHTML = '<div class="test-result pending">Waiting for user response...</div>';
+
+            const confirmed = await confirmAction(
+                'This is a test confirmation dialog. Click Confirm or Cancel.',
+                'Test Confirmation'
+            );
+
+            resultsEl.innerHTML = `<div class="test-result ${confirmed ? 'success' : 'error'}">
+                User clicked: ${confirmed ? 'Confirm' : 'Cancel'}
+            </div>`;
+        });
+
+        document.getElementById('testMultipleDialogs').addEventListener('click', async () => {
+            const resultsEl = document.getElementById('dialogResults');
+            resultsEl.innerHTML = '<div class="test-result pending">Opening 3 dialogs sequentially...</div>';
+
+            for (let i = 1; i <= 3; i++) {
+                await confirmAction(`Dialog ${i} of 3`, 'Memory Leak Test');
+            }
+
+            resultsEl.innerHTML = '<div class="test-result success">✓ 3 dialogs completed. Check DOM for cleanup (should have 0 leftover modals)</div>';
+        });
+
+        // API 401 Handler Test
+        document.getElementById('test401Handler').addEventListener('click', async () => {
+            const resultsEl = document.getElementById('apiResults');
+            resultsEl.innerHTML = '<div class="test-result pending">Testing 401 handler...</div>';
+
+            // Note: This requires a backend endpoint that returns 401
+            // For testing purposes, we'll document the expected behavior
+            resultsEl.innerHTML = `
+                <div class="test-result pending">
+                    <strong>Manual Test Required:</strong><br>
+                    1. In browser DevTools, go to Network tab<br>
+                    2. Create a request that returns 401 (or mock it)<br>
+                    3. Verify: Session cleared, warning toast shown, redirect to /index.html after 1.5s
+                </div>
+            `;
+        });
+
+        // Dirty Form Detection
+        let formIsDirty = false;
+        const dirtyForm = document.getElementById('dirtyTestForm');
+
+        dirtyForm.addEventListener('input', () => {
+            formIsDirty = true;
+            document.getElementById('dirtyFormResults').innerHTML =
+                '<div class="test-result success">✓ Form marked as dirty. Try refreshing the page.</div>';
+        });
+
+        window.addEventListener('beforeunload', (e) => {
+            if (formIsDirty) {
+                e.preventDefault();
+                e.returnValue = 'You have unsaved changes';
+            }
+        });
+
+        // Show initial success message
+        showToast('Phase 3 Stage 1 test page loaded successfully', 'success');
+    </script>
+</body>
+</html>

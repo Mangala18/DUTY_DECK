@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kiosk Break Tracking - Test Suite</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .test-section {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .test-result.success {
+            background-color: #d1e7dd;
+            border: 1px solid #badbcc;
+            color: #0f5132;
+        }
+        .test-result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c2c7;
+            color: #842029;
+        }
+        .test-result.info {
+            background-color: #cfe2ff;
+            border: 1px solid #b6d4fe;
+            color: #084298;
+        }
+        .shift-state-display {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .state-none { background: #e9ecef; color: #495057; }
+        .state-active { background: #d1e7dd; color: #0f5132; }
+        .state-on-break { background: #fff3cd; color: #664d03; }
+        .state-completed { background: #cfe2ff; color: #084298; }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <h1 class="mb-4"><i class="bi bi-cup-hot"></i> Kiosk Break Tracking - Test Suite</h1>
+        <p class="text-muted mb-4">Phase 3 Stage 2 - Testing break in/out, offline queue, and state management</p>
+
+        <!-- Current State Display -->
+        <div class="test-section">
+            <h3><i class="bi bi-info-circle"></i> Current Shift State</h3>
+            <div id="currentState" class="shift-state-display state-none">No active shift</div>
+            <button class="btn btn-sm btn-secondary" onclick="refreshState()">Refresh State</button>
+            <button class="btn btn-sm btn-warning" onclick="clearLocalStorage()">Clear LocalStorage</button>
+        </div>
+
+        <!-- Manual Test Controls -->
+        <div class="test-section">
+            <h3><i class="bi bi-hand-index"></i> Manual Test Controls</h3>
+            <p class="text-muted">Test the full shift lifecycle manually:</p>
+
+            <div class="mb-3">
+                <label class="form-label">Staff Code:</label>
+                <input type="text" id="testStaffCode" class="form-control" value="32186759" placeholder="e.g., 32186759">
+                <small class="text-muted">Use a valid staff code from your database</small>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Venue Code:</label>
+                <input type="text" id="testVenueCode" class="form-control" value="21346453" placeholder="e.g., 21346453">
+                <small class="text-muted">Use a valid venue code (e.g., 21346453 = CASA DE AMOR)</small>
+            </div>
+
+            <div class="btn-group mb-3" role="group">
+                <button class="btn btn-success" onclick="testClockIn()">
+                    <i class="bi bi-play-circle"></i> Clock In
+                </button>
+                <button class="btn btn-warning" onclick="testBreakIn()">
+                    <i class="bi bi-pause-circle"></i> Start Break
+                </button>
+                <button class="btn btn-info" onclick="testBreakOut()">
+                    <i class="bi bi-play-fill"></i> End Break
+                </button>
+                <button class="btn btn-danger" onclick="testClockOut()">
+                    <i class="bi bi-stop-circle"></i> Clock Out
+                </button>
+            </div>
+
+            <div id="manualTestResults"></div>
+        </div>
+
+        <!-- Offline Queue Tests -->
+        <div class="test-section">
+            <h3><i class="bi bi-wifi-off"></i> Offline Queue Tests</h3>
+            <p class="text-muted">Simulate offline behavior and queue sync:</p>
+
+            <div class="mb-2">
+                <strong>Network Status:</strong> <span id="networkStatus" class="badge bg-success">Online</span>
+            </div>
+
+            <div class="mb-2">
+                <strong>Queued Events:</strong> <span id="queueCount" class="badge bg-secondary">0</span>
+            </div>
+
+            <button class="btn btn-primary" onclick="testSync()">
+                <i class="bi bi-arrow-repeat"></i> Sync Queued Breaks
+            </button>
+            <button class="btn btn-secondary" onclick="showQueue()">
+                <i class="bi bi-list"></i> Show Queue
+            </button>
+
+            <div id="queueResults" class="mt-3"></div>
+        </div>
+
+        <!-- Automated Test Suite -->
+        <div class="test-section">
+            <h3><i class="bi bi-check-circle"></i> Automated Test Suite</h3>
+            <button class="btn btn-primary btn-lg" onclick="runFullTestSuite()">
+                <i class="bi bi-play-fill"></i> Run Full Test Suite
+            </button>
+            <div id="automatedResults" class="mt-3"></div>
+        </div>
+
+        <!-- API Endpoint Tests -->
+        <div class="test-section">
+            <h3><i class="bi bi-server"></i> Backend Endpoint Tests</h3>
+            <p class="text-muted">Test each endpoint individually:</p>
+            <button class="btn btn-outline-primary me-2" onclick="testEndpoint('clockin')">POST /shift/:staff_code/clockin</button>
+            <button class="btn btn-outline-warning me-2" onclick="testEndpoint('breakin')">POST /shift/:id/breakin</button>
+            <button class="btn btn-outline-info me-2" onclick="testEndpoint('breakout')">POST /shift/:id/breakout</button>
+            <button class="btn btn-outline-danger" onclick="testEndpoint('clockout')">POST /shift/:id/clockout</button>
+            <div id="endpointResults" class="mt-3"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module">
+        import { clockIn, startBreak, endBreak, clockOut, getCurrentShift, syncQueuedBreaks, getQueuedBreakCount } from './js/kiosk/breaks.js';
+        import { api } from './js/utils/api.js';
+
+        // Make functions global for onclick handlers
+        window.testClockIn = testClockIn;
+        window.testBreakIn = testBreakIn;
+        window.testBreakOut = testBreakOut;
+        window.testClockOut = testClockOut;
+        window.testSync = testSync;
+        window.showQueue = showQueue;
+        window.refreshState = refreshState;
+        window.clearLocalStorage = clearLocalStorage;
+        window.runFullTestSuite = runFullTestSuite;
+        window.testEndpoint = testEndpoint;
+
+        // Network status monitoring
+        function updateNetworkStatus() {
+            const statusEl = document.getElementById('networkStatus');
+            statusEl.textContent = navigator.onLine ? 'Online' : 'Offline';
+            statusEl.className = navigator.onLine ? 'badge bg-success' : 'badge bg-danger';
+        }
+
+        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('offline', updateNetworkStatus);
+        updateNetworkStatus();
+
+        // Update queue count
+        function updateQueueCount() {
+            document.getElementById('queueCount').textContent = getQueuedBreakCount();
+        }
+
+        // Refresh current state
+        function refreshState() {
+            const shift = getCurrentShift();
+            const stateEl = document.getElementById('currentState');
+
+            if (!shift) {
+                stateEl.className = 'shift-state-display state-none';
+                stateEl.textContent = 'No active shift';
+                return;
+            }
+
+            const stateClass = shift.shift_state === 'ACTIVE' ? 'state-active' :
+                               shift.shift_state === 'ON_BREAK' ? 'state-on-break' :
+                               'state-completed';
+
+            stateEl.className = `shift-state-display ${stateClass}`;
+            stateEl.innerHTML = `
+                <div><strong>State:</strong> ${shift.shift_state}</div>
+                <div><strong>Shift ID:</strong> ${shift.shift_id}</div>
+                <div><strong>Staff:</strong> ${shift.staff_code}</div>
+                <div><strong>Clock In:</strong> ${new Date(shift.clock_in).toLocaleTimeString()}</div>
+            `;
+            updateQueueCount();
+        }
+
+        function clearLocalStorage() {
+            localStorage.removeItem('currentShift');
+            localStorage.removeItem('pendingBreakEvents');
+            refreshState();
+            addResult('manualTestResults', 'LocalStorage cleared', 'info');
+        }
+
+        async function testClockIn() {
+            const staffCode = document.getElementById('testStaffCode').value;
+            const venueCode = document.getElementById('testVenueCode').value;
+
+            try {
+                const result = await clockIn(staffCode, venueCode);
+                addResult('manualTestResults', `Clock In success: Shift ID ${result.shift_id}`, 'success');
+                refreshState();
+            } catch (error) {
+                addResult('manualTestResults', `Clock In error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testBreakIn() {
+            const shift = getCurrentShift();
+            if (!shift) {
+                addResult('manualTestResults', 'No active shift found', 'error');
+                return;
+            }
+
+            try {
+                await startBreak(shift.shift_id);
+                addResult('manualTestResults', 'Break started successfully', 'success');
+                refreshState();
+            } catch (error) {
+                addResult('manualTestResults', `Break start error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testBreakOut() {
+            const shift = getCurrentShift();
+            if (!shift) {
+                addResult('manualTestResults', 'No active shift found', 'error');
+                return;
+            }
+
+            try {
+                const result = await endBreak(shift.shift_id);
+                addResult('manualTestResults', `Break ended. Total: ${result.total_break_minutes || 0} min`, 'success');
+                refreshState();
+            } catch (error) {
+                addResult('manualTestResults', `Break end error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testClockOut() {
+            const shift = getCurrentShift();
+            if (!shift) {
+                addResult('manualTestResults', 'No active shift found', 'error');
+                return;
+            }
+
+            try {
+                const result = await clockOut(shift.shift_id);
+                addResult('manualTestResults', `Clock Out success: ${result.shift.hours_worked}h worked`, 'success');
+                refreshState();
+            } catch (error) {
+                addResult('manualTestResults', `Clock Out error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testSync() {
+            try {
+                const count = await syncQueuedBreaks();
+                addResult('queueResults', `Synced ${count} event(s)`, count > 0 ? 'success' : 'info');
+                updateQueueCount();
+            } catch (error) {
+                addResult('queueResults', `Sync error: ${error.message}`, 'error');
+            }
+        }
+
+        function showQueue() {
+            const queue = JSON.parse(localStorage.getItem('pendingBreakEvents') || '[]');
+            const resultsEl = document.getElementById('queueResults');
+
+            if (queue.length === 0) {
+                resultsEl.innerHTML = '<div class="test-result info">Queue is empty</div>';
+                return;
+            }
+
+            resultsEl.innerHTML = '<div class="test-result info"><strong>Queued Events:</strong></div>' +
+                queue.map((e, i) => `<div class="test-result info">${i + 1}. ${e.type} - Shift ${e.data.shift_id} @ ${new Date(e.timestamp).toLocaleTimeString()}</div>`).join('');
+        }
+
+        async function runFullTestSuite() {
+            const resultsEl = document.getElementById('automatedResults');
+            resultsEl.innerHTML = '<div class="test-result info">Running test suite...</div>';
+
+            // Clear previous state
+            clearLocalStorage();
+
+            const tests = [];
+
+            // Test 1: Clock In
+            tests.push({
+                name: 'Clock In',
+                fn: async () => {
+                    const result = await clockIn('32186759', '21346453');
+                    return result.shift_id ? 'PASS' : 'FAIL';
+                }
+            });
+
+            // Test 2: Start Break
+            tests.push({
+                name: 'Start Break',
+                fn: async () => {
+                    const shift = getCurrentShift();
+                    await startBreak(shift.shift_id);
+                    const updated = getCurrentShift();
+                    return updated.shift_state === 'ON_BREAK' ? 'PASS' : 'FAIL';
+                }
+            });
+
+            // Test 3: End Break
+            tests.push({
+                name: 'End Break',
+                fn: async () => {
+                    const shift = getCurrentShift();
+                    const result = await endBreak(shift.shift_id);
+                    const updated = getCurrentShift();
+                    return updated.shift_state === 'ACTIVE' ? 'PASS' : 'FAIL';
+                }
+            });
+
+            // Test 4: Clock Out
+            tests.push({
+                name: 'Clock Out',
+                fn: async () => {
+                    const shift = getCurrentShift();
+                    await clockOut(shift.shift_id);
+                    const updated = getCurrentShift();
+                    return updated === null ? 'PASS' : 'FAIL';
+                }
+            });
+
+            let results = '';
+            for (const test of tests) {
+                try {
+                    const result = await test.fn();
+                    results += `<div class="test-result ${result === 'PASS' ? 'success' : 'error'}">✓ ${test.name}: ${result}</div>`;
+                } catch (error) {
+                    results += `<div class="test-result error">✗ ${test.name}: ERROR - ${error.message}</div>`;
+                }
+                // Wait 1 second between tests
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
+            resultsEl.innerHTML = results;
+        }
+
+        async function testEndpoint(endpoint) {
+            const resultsEl = document.getElementById('endpointResults');
+            const shift = getCurrentShift();
+
+            try {
+                let result;
+                switch (endpoint) {
+                    case 'clockin':
+                        result = await api.post('/kiosk/shift/TEST_ENDPOINT/clockin', { venue_code: 'V001' });
+                        break;
+                    case 'breakin':
+                        if (!shift) throw new Error('No active shift');
+                        result = await api.post(`/kiosk/shift/${shift.shift_id}/breakin`);
+                        break;
+                    case 'breakout':
+                        if (!shift) throw new Error('No active shift');
+                        result = await api.post(`/kiosk/shift/${shift.shift_id}/breakout`);
+                        break;
+                    case 'clockout':
+                        if (!shift) throw new Error('No active shift');
+                        result = await api.post(`/kiosk/shift/${shift.shift_id}/clockout`);
+                        break;
+                }
+
+                addResult('endpointResults', `${endpoint}: ${JSON.stringify(result)}`, 'success');
+            } catch (error) {
+                addResult('endpointResults', `${endpoint}: ${error.message}`, 'error');
+            }
+        }
+
+        function addResult(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${type}`;
+            resultDiv.textContent = message;
+            el.insertBefore(resultDiv, el.firstChild);
+        }
+
+        // Initialize
+        refreshState();
+        updateQueueCount();
+    </script>
+</body>
+</html>
