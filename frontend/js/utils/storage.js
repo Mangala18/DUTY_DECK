@@ -4,6 +4,49 @@
  */
 
 /**
+ * Get an item from localStorage
+ * Attempts to parse JSON, returns raw string if parsing fails
+ * @param {string} key - The localStorage key
+ * @returns {any} Parsed JSON object or raw string
+ */
+export function getItem(key) {
+  try {
+    const value = localStorage.getItem(key);
+    if (!value) return null;
+
+    // Try to parse as JSON
+    try {
+      return JSON.parse(value);
+    } catch {
+      // If JSON parsing fails, return raw string
+      return value;
+    }
+  } catch (err) {
+    console.error(`Error getting item '${key}' from localStorage:`, err);
+    return null;
+  }
+}
+
+/**
+ * Set an item in localStorage
+ * Automatically stringifies objects/arrays
+ * @param {string} key - The localStorage key
+ * @param {any} value - The value to store
+ */
+export function setItem(key, value) {
+  try {
+    if (typeof value === 'object') {
+      localStorage.setItem(key, JSON.stringify(value));
+    } else {
+      localStorage.setItem(key, value);
+    }
+  } catch (err) {
+    console.error(`Error setting item '${key}' in localStorage:`, err);
+    throw err;
+  }
+}
+
+/**
  * Storage object with methods for user session management
  */
 export const Storage = {
@@ -123,6 +166,15 @@ export const Storage = {
   getUserVenueCode() {
     const user = this.getUser();
     return user?.venue_code || null;
+  },
+
+  /**
+   * Get user's staff code
+   * @returns {string|null} Staff code or null
+   */
+  getUserStaffCode() {
+    const user = this.getUser();
+    return user?.staff_code || null;
   },
 
   /**

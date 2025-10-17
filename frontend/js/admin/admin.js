@@ -6,6 +6,10 @@
 import { Storage } from '../utils/storage.js';
 import { showToast } from '../utils/ui.js';
 import { initStaffModule, loadStaffList } from './staff/index.js';
+import { initVenueModule, loadVenues } from './venue.js';
+import { initScheduleModule, loadSchedule } from './schedule.js';
+import { initTimesheetModule, loadTimesheetStaff } from './timesheet.js';
+import { initPayroll, loadPayrollSummary } from './payroll.js';
 import { apiRequest } from '../utils/api.js';
 
 // Check authentication on page load
@@ -51,6 +55,18 @@ function initializeAdminPanel() {
     // Initialize staff module
     initStaffModule();
 
+    // Initialize venue module
+    initVenueModule();
+
+    // Initialize schedule module
+    initScheduleModule();
+
+    // Initialize timesheet module
+    initTimesheetModule();
+
+    // Initialize payroll module
+    initPayroll();
+
     // Show welcome toast
     showToast(`Welcome back, ${Storage.getUserFullName()}!`, 'success');
 }
@@ -72,42 +88,89 @@ function updateWelcomeMessage() {
  */
 function setupNavigation() {
     const sidebarLinks = document.querySelectorAll('.sidebar .nav-link');
-    const panels = document.querySelectorAll('.content-panel');
+    const sections = document.querySelectorAll('.content-section');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    const pageTitle = document.getElementById('pageTitle');
 
     sidebarLinks.forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
 
-            const panelId = link.dataset.panel + 'Panel';
+            const sectionName = link.dataset.section;
+            const sectionId = sectionName + 'Section';
 
             // Update active link
             sidebarLinks.forEach(l => l.classList.remove('active'));
             link.classList.add('active');
 
-            // Show corresponding panel
-            panels.forEach(panel => {
-                if (panel.id === panelId) {
-                    panel.classList.add('active');
+            // Update page title
+            const titleText = link.querySelector('.nav-text').textContent;
+            if (pageTitle) {
+                pageTitle.textContent = titleText;
+            }
 
-                    // Load data for specific panels
-                    if (panelId === 'staffPanel') {
+            // Show corresponding section
+            sections.forEach(section => {
+                if (section.id === sectionId) {
+                    section.classList.add('active');
+
+                    // Load data for specific sections
+                    if (sectionId === 'staffSection') {
                         loadStaffList();
-                    } else if (panelId === 'dashboardPanel') {
+                    } else if (sectionId === 'dashboardSection') {
                         loadDashboardMetrics();
+                    } else if (sectionId === 'businessSection') {
+                        loadVenues();
+                    } else if (sectionId === 'scheduleSection') {
+                        loadSchedule();
+                    } else if (sectionId === 'timesheetSection') {
+                        loadTimesheetStaff();
+                    } else if (sectionId === 'payrollSection') {
+                        loadPayrollSummary();
                     }
                 } else {
-                    panel.classList.remove('active');
+                    section.classList.remove('active');
                 }
             });
+
+            // Close sidebar on mobile after selecting
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('mobile-open');
+                sidebarOverlay.classList.remove('show');
+            }
         });
     });
 
-    // Sidebar toggle for mobile
+    // Desktop sidebar toggle (collapse/expand)
     const sidebarToggle = document.getElementById('sidebarToggle');
-    const sidebar = document.getElementById('sidebar');
     if (sidebarToggle && sidebar) {
         sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('show');
+            if (window.innerWidth > 768) {
+                // Desktop: toggle collapsed state
+                sidebar.classList.toggle('collapsed');
+            } else {
+                // Mobile: toggle mobile-open state
+                sidebar.classList.toggle('mobile-open');
+                sidebarOverlay.classList.toggle('show');
+            }
+        });
+    }
+
+    // Mobile toggle button
+    const mobileToggle = document.getElementById('mobileToggle');
+    if (mobileToggle) {
+        mobileToggle.addEventListener('click', () => {
+            sidebar.classList.add('mobile-open');
+            sidebarOverlay.classList.add('show');
+        });
+    }
+
+    // Close sidebar when overlay is clicked
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('mobile-open');
+            sidebarOverlay.classList.remove('show');
         });
     }
 

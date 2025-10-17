@@ -45,8 +45,8 @@ export function initStaffModule() {
  * Setup all event listeners for staff module
  */
 function setupEventListeners() {
-    // Add Staff Form
-    const addStaffForm = document.getElementById('addStaffForm');
+    // Add Staff Form Element (the form itself)
+    const addStaffForm = document.getElementById('addStaffFormElement');
     if (addStaffForm) {
         addStaffForm.addEventListener('submit', handleAddStaff);
     }
@@ -57,11 +57,32 @@ function setupEventListeners() {
         editStaffForm.addEventListener('submit', handleEditStaff);
     }
 
-    // Load venues when Add Staff modal opens
-    const addStaffModal = document.getElementById('addStaffModal');
-    if (addStaffModal) {
-        addStaffModal.addEventListener('show.bs.modal', () => {
+    // Show/Hide Add Staff Form (inline form, not modal)
+    const showAddStaffBtn = document.getElementById('showAddStaffBtn');
+    const hideAddStaffBtn = document.getElementById('hideAddStaffBtn');
+    const cancelAddStaffBtn = document.getElementById('cancelAddStaffBtn');
+    const addStaffFormContainer = document.getElementById('addStaffForm');
+    const staffFilters = document.getElementById('staffFilters');
+
+    if (showAddStaffBtn && addStaffFormContainer) {
+        showAddStaffBtn.addEventListener('click', () => {
+            addStaffFormContainer.style.display = 'block';
+            if (staffFilters) staffFilters.style.display = 'none';
             populateVenueDropdown();
+        });
+    }
+
+    if (hideAddStaffBtn && addStaffFormContainer) {
+        hideAddStaffBtn.addEventListener('click', () => {
+            addStaffFormContainer.style.display = 'none';
+            if (staffFilters) staffFilters.style.display = 'block';
+        });
+    }
+
+    if (cancelAddStaffBtn && addStaffFormContainer) {
+        cancelAddStaffBtn.addEventListener('click', () => {
+            addStaffFormContainer.style.display = 'none';
+            if (staffFilters) staffFilters.style.display = 'block';
         });
     }
 

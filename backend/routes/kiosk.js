@@ -1,12 +1,13 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
+const { determinePaydayType, calculateShiftPay } = require("../utils/payCalculator");
 
 // ===== Step 5: DB Connection Keepalive Monitor =====
 // Prevents MySQL idle disconnects with periodic health checks
 setInterval(async () => {
   try {
-    await db.promise().query('SELECT 1');
+    await db.query('SELECT 1');
     console.log('✅ DB keepalive ping successful');
   } catch (err) {
     console.error('❌ DB keepalive failed:', err.message);
@@ -21,7 +22,7 @@ setInterval(async () => {
     const maxHours = 10;
 
     // Find all shifts that have been active for more than 10 hours
-    const [longShifts] = await db.promise().query(`
+    const [longShifts] = await db.query(`
       SELECT s.id, s.staff_code, s.clock_in, s.venue_code,
              TIMESTAMPDIFF(HOUR, s.clock_in, NOW()) as hours_open
       FROM shifts s
@@ -41,36 +42,59 @@ setInterval(async () => {
       const autoClockOut = new Date(new Date(shift.clock_in).getTime() + maxHours * 60 * 60 * 1000);
 
       try {
+        // Get venue details for business_code
+        const [venueRows] = await db.query(
+          'SELECT business_code FROM venues WHERE venue_code = ? LIMIT 1',
+          [shift.venue_code]
+        );
+
+        if (!venueRows.length) {
+          console.error(`❌ Failed to auto-close shift ${shift.id}: venue not found`);
+          continue;
+        }
+
+        const businessCode = venueRows[0].business_code;
+
         // Get pay rates for calculation
-        const [rates] = await db.promise().query(`
+        const [rates] = await db.query(`
           SELECT weekday_rate, saturday_rate, sunday_rate, public_holiday_rate
           FROM pay_rates
           WHERE staff_code = ?
           LIMIT 1
         `, [shift.staff_code]);
 
-        let totalPay = 0;
-        let appliedRate = 0;
+        // Determine payday_type based on date and holidays
+        const paydayType = await determinePaydayType(new Date(shift.clock_in), businessCode);
 
-        if (rates.length > 0) {
-          const rate = rates[0];
-          // Use weekday rate as default for auto-close
-          appliedRate = rate.weekday_rate || 0;
-          totalPay = maxHours * appliedRate;
+        // Calculate pay using the utility (will use base rate if no rates found)
+        const rate = rates.length > 0 ? rates[0] : null;
+
+        if (!rate) {
+          console.warn(`[AUTO-CLOSE] ⚠️  No pay rates found for staff ${shift.staff_code} - using base rate $25/hr`);
         }
 
+        const payResult = calculateShiftPay({
+          hoursWorked: maxHours,
+          paydayType,
+          rates: rate
+        });
+
+        const appliedRate = payResult.appliedRate;
+        const totalPay = payResult.totalPay;
+
         // Close the shift
-        await db.promise().query(`
+        await db.query(`
           UPDATE shifts
           SET clock_out = ?,
               hours_worked = ?,
               applied_rate = ?,
               total_pay = ?,
+              payday_type = ?,
               shift_state = 'COMPLETED'
           WHERE id = ?
-        `, [autoClockOut, maxHours, appliedRate, totalPay, shift.id]);
+        `, [autoClockOut, maxHours, appliedRate, totalPay, paydayType, shift.id]);
 
-        console.log(`✅ Auto-closed shift ${shift.id} for ${shift.staff_code}: ${shift.hours_open}h → ${maxHours}h`);
+        console.log(`✅ Auto-closed shift ${shift.id} for ${shift.staff_code}: ${shift.hours_open}h → ${maxHours}h [${paydayType}]`);
 
       } catch (err) {
         console.error(`❌ Failed to auto-close shift ${shift.id}:`, err.message);
@@ -82,16 +106,13 @@ setInterval(async () => {
   }
 }, 900000); // 15 minutes
 
-// TODO: Implement HolidayCalculator for public holidays
-// const { HolidayCalculator } = require("../public-holidays-config");
-
 // ===== Health Check Endpoint =====
 // Purpose: Verify backend and database connectivity
 // Used by: Frontend isBackendHealthy() function
 router.get('/health', async (_req, res) => {
   try {
     // Test database connectivity with simple query
-    await db.promise().query('SELECT 1');
+    await db.query('SELECT 1');
 
     res.json({
       healthy: true,
@@ -108,76 +129,22 @@ router.get('/health', async (_req, res) => {
   }
 });
 
-// Utility: auto-close long shifts (max 10h)
-function autoCloseShift(shift, cb) {
-  const maxHours = 10;
-  const now = new Date();
-  const start = new Date(shift.clock_in);
-  const durationMs = now - start;
-  const hoursWorked = durationMs / (1000 * 60 * 60);
+// Kiosk login
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  if (hoursWorked > maxHours) {
-    const autoClockOut = new Date(start.getTime() + maxHours * 60 * 60 * 1000);
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Missing username or password' });
+    }
 
-    // Get pay rates for proper calculation
-    const rateQuery = `
-      SELECT * FROM pay_rates
-      WHERE staff_code = ?
-      AND effective_from <= ?
-      ORDER BY effective_from DESC
-      LIMIT 1
+    const sql = `
+      SELECT venue_code, business_code, venue_name, contact_email, kiosk_password, timezone
+      FROM venues
+      WHERE contact_email = ? AND kiosk_password = ? AND status = 'active'
     `;
 
-    db.query(rateQuery, [shift.staff_code, autoClockOut.toISOString().split('T')[0]], (err, results) => {
-      if (err) return cb(err, null);
-
-      let totalPay = 0;
-      if (results && results.length > 0) {
-        const rate = results[0];
-        // Use weekday rate as default for auto-close (could be enhanced later)
-        totalPay = maxHours * (rate.weekday_rate || 0);
-      }
-
-      const updateQuery = `
-        UPDATE shifts
-        SET clock_out = ?, hours_worked = ?, total_pay = ?, shift_state = 'COMPLETED'
-        WHERE id = ?
-      `;
-
-      db.query(updateQuery, [autoClockOut, maxHours, totalPay, shift.id], (err) => {
-        if (err) return cb(err, null);
-
-        shift.clock_out = autoClockOut;
-        shift.hours_worked = maxHours;
-        shift.total_pay = totalPay;
-        console.log(`✅ Auto-closed shift ID ${shift.id} for staff ${shift.staff_code}: ${hoursWorked.toFixed(2)}h → ${maxHours}h`);
-        cb(null, shift);
-      });
-    });
-  } else {
-    cb(null, shift);
-  }
-}
-
-// Kiosk login
-router.post('/login', (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Missing username or password' });
-  }
-
-  const sql = `
-    SELECT venue_code, business_code, venue_name, contact_email, kiosk_password, timezone
-    FROM venues
-    WHERE contact_email = ? AND kiosk_password = ? AND status = 'active'
-  `;
-
-  db.query(sql, [username, password], (err, results) => {
-    if (err) {
-      console.error('Error during kiosk login:', err);
-      return res.status(500).json({ error: 'Login failed' });
-    }
+    const [results] = await db.query(sql, [username, password]);
 
     if (!results || results.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -194,40 +161,40 @@ router.post('/login', (req, res) => {
       contact_email: venue.contact_email,
       timezone: venue.timezone || 'Australia/Sydney' // Fallback to AEST if NULL
     });
-  });
+  } catch (err) {
+    console.error('Error during kiosk login:', err);
+    res.status(500).json({ error: 'Login failed' });
+  }
 });
 
 // Validate staff PIN (for kiosk access - all active staff at venue)
-router.post("/validate-pin", (req, res) => {
-  const { staff_code, pin, venue_code } = req.body;
+router.post("/validate-pin", async (req, res) => {
+  try {
+    const { staff_code, pin, venue_code } = req.body;
 
-  if (!staff_code || !pin || !venue_code) {
-    return res.status(400).json({ success: false, error: "Missing staff_code, PIN, or venue_code" });
-  }
-
-  // Validate PIN format (6 digits)
-  if (!/^\d{6}$/.test(pin)) {
-    return res.status(400).json({ success: false, error: "PIN must be 6 digits" });
-  }
-
-  // Allow staff who are:
-  // 1. Assigned to this specific venue (venue_code matches)
-  // 2. System admins (venue_code IS NULL) who can work at any venue
-  const sql = `
-    SELECT u.id, u.kiosk_pin, u.staff_code, u.access_level,
-           s.first_name, s.last_name, s.venue_code, s.business_code
-    FROM users u
-    JOIN staff s ON u.staff_code = s.staff_code
-    WHERE u.staff_code = ?
-      AND (s.venue_code = ? OR s.venue_code IS NULL)
-      AND s.employment_status = 'active'
-  `;
-
-  db.query(sql, [staff_code, venue_code], (err, results) => {
-    if (err) {
-      console.error("Error validating PIN:", err);
-      return res.status(500).json({ success: false, error: "Database error" });
+    if (!staff_code || !pin || !venue_code) {
+      return res.status(400).json({ success: false, error: "Missing staff_code, PIN, or venue_code" });
     }
+
+    // Validate PIN format (6 digits)
+    if (!/^\d{6}$/.test(pin)) {
+      return res.status(400).json({ success: false, error: "PIN must be 6 digits" });
+    }
+
+    // Allow staff who are:
+    // 1. Assigned to this specific venue (venue_code matches)
+    // 2. System admins (venue_code IS NULL) who can work at any venue
+    const sql = `
+      SELECT u.id, u.kiosk_pin, u.staff_code, u.access_level,
+             s.first_name, s.last_name, s.venue_code, s.business_code
+      FROM users u
+      JOIN staff s ON u.staff_code = s.staff_code
+      WHERE u.staff_code = ?
+        AND (s.venue_code = ? OR s.venue_code IS NULL)
+        AND s.employment_status = 'active'
+    `;
+
+    const [results] = await db.query(sql, [staff_code, venue_code]);
 
     if (!results || results.length === 0) {
       return res.status(404).json({ success: false, error: "Staff not found or not authorized for this venue" });
@@ -249,43 +216,46 @@ router.post("/validate-pin", (req, res) => {
       business_code: user.business_code,
       access_level: user.access_level
     });
-  });
+  } catch (err) {
+    console.error("Error validating PIN:", err);
+    res.status(500).json({ success: false, error: "Database error" });
+  }
 });
 
 // Get staff for kiosk display (venue-specific + system admins)
-router.get("/staff", (req, res) => {
-  const { business_code, venue_code } = req.query;
+router.get("/staff", async (req, res) => {
+  try {
+    const { business_code, venue_code } = req.query;
 
-  if (!business_code || !venue_code) {
-    return res.status(400).json({ error: "business_code and venue_code are required" });
-  }
-
-  // Include both:
-  // 1. Staff assigned to this specific venue
-  // 2. System admins (venue_code = NULL) who can work at any venue in the business
-  // Note: Includes kiosk_pin for offline caching (testing phase)
-  const sql = `
-    SELECT s.staff_code, s.first_name, s.middle_name, s.last_name,
-           s.venue_code, s.business_code, s.employment_status, s.role_title,
-           u.kiosk_pin
-    FROM staff s
-    LEFT JOIN users u ON s.staff_code = u.staff_code
-    WHERE s.business_code = ?
-      AND (s.venue_code = ? OR s.venue_code IS NULL)
-      AND s.employment_status = 'active'
-    ORDER BY
-      CASE WHEN s.venue_code IS NULL THEN 0 ELSE 1 END,
-      s.first_name,
-      s.last_name
-  `;
-
-  db.query(sql, [business_code, venue_code], (err, results) => {
-    if (err) {
-      console.error("Error fetching kiosk staff:", err);
-      return res.status(500).json({ error: "Failed to fetch staff" });
+    if (!business_code || !venue_code) {
+      return res.status(400).json({ error: "business_code and venue_code are required" });
     }
+
+    // Include both:
+    // 1. Staff assigned to this specific venue
+    // 2. System admins (venue_code = NULL) who can work at any venue in the business
+    // Note: Includes kiosk_pin for offline caching (testing phase)
+    const sql = `
+      SELECT s.staff_code, s.first_name, s.middle_name, s.last_name,
+             s.venue_code, s.business_code, s.employment_status, s.role_title,
+             u.kiosk_pin
+      FROM staff s
+      LEFT JOIN users u ON s.staff_code = u.staff_code
+      WHERE s.business_code = ?
+        AND (s.venue_code = ? OR s.venue_code IS NULL)
+        AND s.employment_status = 'active'
+      ORDER BY
+        CASE WHEN s.venue_code IS NULL THEN 0 ELSE 1 END,
+        s.first_name,
+        s.last_name
+    `;
+
+    const [results] = await db.query(sql, [business_code, venue_code]);
     res.json({ success: true, data: results });
-  });
+  } catch (err) {
+    console.error("Error fetching kiosk staff:", err);
+    res.status(500).json({ error: "Failed to fetch staff" });
+  }
 });
 
 // ===== LEGACY ENDPOINTS REMOVED =====
@@ -340,15 +310,10 @@ router.get("/status/venue/:venue_code", async (req, res) => {
         s.last_name
     `;
 
-    db.query(query, [venue_code, business_code, venue_code], (err, rows) => {
-      if (err) {
-        console.error('❌ Batch status query error:', err);
-        return res.status(500).json({ success: false, error: err.message });
-      }
+    const [rows] = await db.query(query, [venue_code, business_code, venue_code]);
 
-      console.log(`✅ Batch status: ${rows.length} staff records (venue + system admins) for venue ${venue_code}`);
-      res.json({ success: true, data: rows });
-    });
+    console.log(`✅ Batch status: ${rows.length} staff records (venue + system admins) for venue ${venue_code}`);
+    res.json({ success: true, data: rows });
 
   } catch (err) {
     console.error('❌ Batch status error:', err);
@@ -357,30 +322,27 @@ router.get("/status/venue/:venue_code", async (req, res) => {
 });
 
 // Get active shift status for a staff member (with auto-close)
-router.get("/status/:staff_code", (req, res) => {
-  const { staff_code } = req.params;
-  const { venue_code } = req.query;
+router.get("/status/:staff_code", async (req, res) => {
+  try {
+    const { staff_code } = req.params;
+    const { venue_code } = req.query;
 
-  if (!venue_code) {
-    return res.status(400).json({ error: "venue_code is required" });
-  }
-
-  // First check for ANY active shift (any venue)
-  const anyShiftQuery = `
-    SELECT s.*, v.venue_name
-    FROM shifts s
-    LEFT JOIN venues v ON s.venue_code = v.venue_code
-    WHERE s.staff_code = ?
-    AND s.shift_state IN ('ACTIVE', 'ON_BREAK')
-    ORDER BY s.clock_in DESC
-    LIMIT 1
-  `;
-
-  db.query(anyShiftQuery, [staff_code], (err, anyShifts) => {
-    if (err) {
-      console.error("Error fetching shift status:", err);
-      return res.status(500).json({ error: err.message });
+    if (!venue_code) {
+      return res.status(400).json({ error: "venue_code is required" });
     }
+
+    // First check for ANY active shift (any venue)
+    const anyShiftQuery = `
+      SELECT s.*, v.venue_name
+      FROM shifts s
+      LEFT JOIN venues v ON s.venue_code = v.venue_code
+      WHERE s.staff_code = ?
+      AND s.shift_state IN ('ACTIVE', 'ON_BREAK')
+      ORDER BY s.clock_in DESC
+      LIMIT 1
+    `;
+
+    const [anyShifts] = await db.query(anyShiftQuery, [staff_code]);
 
     if (!anyShifts || anyShifts.length === 0) {
       return res.json({ active: false });
@@ -403,39 +365,21 @@ router.get("/status/:staff_code", (req, res) => {
     }
 
     // Shift is at current venue - proceed with normal logic
-    // Auto-close if over 10 hours
-    autoCloseShift(shift, (err, updatedShift) => {
-      if (err) {
-        console.error("⚠️  Error auto-closing shift:", err);
-        // Return shift as active but warn about data issue
-        // This prevents the kiosk from crashing entirely
-        return res.json({
-          active: true,
-          clock_in: shift.clock_in,
-          venue_code: shift.venue_code,
-          staff_code: shift.staff_code,
-          shift_state: shift.shift_state,
-          last_action_time: shift.last_action_time,
-          shift_id: shift.id,
-          warning: "Auto-close failed - please verify shift data or clock out manually"
-        });
-      }
-
-      if (updatedShift.clock_out) {
-        return res.json({ active: false, autoClosed: true, shift: updatedShift });
-      }
-
-      res.json({
-        active: true,
-        clock_in: shift.clock_in,
-        venue_code: shift.venue_code,
-        staff_code: shift.staff_code,
-        shift_state: shift.shift_state,
-        last_action_time: shift.last_action_time,
-        shift_id: shift.id
-      });
+    // Note: Auto-close logic moved to interval monitor at top of file
+    // Just return current state
+    res.json({
+      active: true,
+      clock_in: shift.clock_in,
+      venue_code: shift.venue_code,
+      staff_code: shift.staff_code,
+      shift_state: shift.shift_state,
+      last_action_time: shift.last_action_time,
+      shift_id: shift.id
     });
-  });
+  } catch (err) {
+    console.error("Error fetching shift status:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ===== Phase 3 Stage 2: Break Tracking Endpoints =====
@@ -450,7 +394,7 @@ router.post("/shift/:staff_code/clockin", async (req, res) => {
     return res.status(400).json({ success: false, error: "Missing staff_code or venue_code" });
   }
 
-  const connection = await db.promise().getConnection();
+  const connection = await db.getConnection();
 
   try {
     await connection.beginTransaction();
@@ -502,21 +446,18 @@ router.post("/shift/:staff_code/clockin", async (req, res) => {
 });
 
 // Break In (start break)
-router.post("/shift/:id/breakin", (req, res) => {
-  const { id } = req.params;
+router.post("/shift/:id/breakin", async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  const updateQuery = `
-    UPDATE shifts
-    SET shift_state = 'ON_BREAK',
-        last_action_time = NOW()
-    WHERE id = ? AND shift_state = 'ACTIVE'
-  `;
+    const updateQuery = `
+      UPDATE shifts
+      SET shift_state = 'ON_BREAK',
+          last_action_time = NOW()
+      WHERE id = ? AND shift_state = 'ACTIVE'
+    `;
 
-  db.query(updateQuery, [id], (err, result) => {
-    if (err) {
-      console.error("Error starting break:", err);
-      return res.status(500).json({ success: false, error: "Failed to start break" });
-    }
+    const [result] = await db.query(updateQuery, [id]);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({
@@ -531,26 +472,26 @@ router.post("/shift/:id/breakin", (req, res) => {
       message: "Break started",
       shift_state: "ON_BREAK"
     });
-  });
+  } catch (err) {
+    console.error("Error starting break:", err);
+    res.status(500).json({ success: false, error: "Failed to start break" });
+  }
 });
 
 // Break Out (end break)
-router.post("/shift/:id/breakout", (req, res) => {
-  const { id } = req.params;
+router.post("/shift/:id/breakout", async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  const updateQuery = `
-    UPDATE shifts
-    SET break_minutes = break_minutes + TIMESTAMPDIFF(MINUTE, last_action_time, NOW()),
-        last_action_time = NOW(),
-        shift_state = 'ACTIVE'
-    WHERE id = ? AND shift_state = 'ON_BREAK'
-  `;
+    const updateQuery = `
+      UPDATE shifts
+      SET break_minutes = break_minutes + TIMESTAMPDIFF(MINUTE, last_action_time, NOW()),
+          last_action_time = NOW(),
+          shift_state = 'ACTIVE'
+      WHERE id = ? AND shift_state = 'ON_BREAK'
+    `;
 
-  db.query(updateQuery, [id], (err, result) => {
-    if (err) {
-      console.error("Error ending break:", err);
-      return res.status(500).json({ success: false, error: "Failed to end break" });
-    }
+    const [result] = await db.query(updateQuery, [id]);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({
@@ -561,46 +502,50 @@ router.post("/shift/:id/breakout", (req, res) => {
 
     // Get updated break_minutes
     const selectQuery = `SELECT break_minutes FROM shifts WHERE id = ?`;
-    db.query(selectQuery, [id], (err, shifts) => {
-      if (err || !shifts || shifts.length === 0) {
-        return res.json({
-          success: true,
-          message: "Break ended",
-          shift_state: "ACTIVE"
-        });
-      }
+    const [shifts] = await db.query(selectQuery, [id]);
 
-      console.log(`✅ Break ended: Shift ID ${id} → Total break: ${shifts[0].break_minutes} minutes`);
-      res.json({
+    if (!shifts || shifts.length === 0) {
+      return res.json({
         success: true,
         message: "Break ended",
-        shift_state: "ACTIVE",
-        total_break_minutes: shifts[0].break_minutes
+        shift_state: "ACTIVE"
       });
+    }
+
+    console.log(`✅ Break ended: Shift ID ${id} → Total break: ${shifts[0].break_minutes} minutes`);
+    res.json({
+      success: true,
+      message: "Break ended",
+      shift_state: "ACTIVE",
+      total_break_minutes: shifts[0].break_minutes
     });
-  });
+  } catch (err) {
+    console.error("Error ending break:", err);
+    res.status(500).json({ success: false, error: "Failed to end break" });
+  }
 });
 
 // Clock Out (with break-adjusted hours_worked calculation)
-router.post("/shift/:id/clockout", (req, res) => {
-  const { id } = req.params;
+router.post("/shift/:id/clockout", async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`[KIOSK CLOCKOUT] 🔍 Shift ID: ${id}`);
 
-  // Get shift details first
-  const selectQuery = `
-    SELECT s.*, pr.weekday_rate, pr.saturday_rate, pr.sunday_rate, pr.public_holiday_rate, pr.overtime_rate
-    FROM shifts s
-    LEFT JOIN pay_rates pr ON s.staff_code = pr.staff_code
-    WHERE s.id = ? AND s.shift_state IN ('ACTIVE', 'ON_BREAK')
-    LIMIT 1
-  `;
+    // Get shift details first including venue business_code
+    const selectQuery = `
+      SELECT s.*, v.business_code,
+             pr.weekday_rate, pr.saturday_rate, pr.sunday_rate, pr.public_holiday_rate, pr.overtime_rate
+      FROM shifts s
+      LEFT JOIN pay_rates pr ON s.staff_code = pr.staff_code
+      LEFT JOIN venues v ON s.venue_code = v.venue_code
+      WHERE s.id = ? AND s.shift_state IN ('ACTIVE', 'ON_BREAK')
+      LIMIT 1
+    `;
 
-  db.query(selectQuery, [id], (err, shifts) => {
-    if (err) {
-      console.error("Error fetching shift:", err);
-      return res.status(500).json({ success: false, error: "Database error" });
-    }
+    const [shifts] = await db.query(selectQuery, [id]);
 
     if (!shifts || shifts.length === 0) {
+      console.error(`[KIOSK CLOCKOUT] ❌ No active shift found with ID ${id}`);
       return res.status(400).json({
         success: false,
         error: "No active shift found or shift already completed"
@@ -608,6 +553,22 @@ router.post("/shift/:id/clockout", (req, res) => {
     }
 
     const shift = shifts[0];
+    console.log(`[KIOSK CLOCKOUT] 📋 Shift data: staff=${shift.staff_code}, venue=${shift.venue_code}, business=${shift.business_code}`);
+
+    // Check if pay rates exist (warn but don't fail - will use base rate $25/hr)
+    if (!shift.weekday_rate && shift.weekday_rate !== 0) {
+      console.warn(`[KIOSK CLOCKOUT] ⚠️  No pay rates found for staff ${shift.staff_code} - using base rate $25/hr`);
+    }
+
+    // Check if business_code exists
+    if (!shift.business_code) {
+      console.error(`[KIOSK CLOCKOUT] ❌ No business_code found for venue ${shift.venue_code}`);
+      return res.status(400).json({
+        success: false,
+        error: `Venue ${shift.venue_code} is missing business_code`
+      });
+    }
+
     const clockIn = new Date(shift.clock_in);
     const clockOut = new Date();
 
@@ -619,51 +580,64 @@ router.post("/shift/:id/clockout", (req, res) => {
     const breakHours = (shift.break_minutes || 0) / 60;
     const hoursWorked = Math.round((totalHours - breakHours) * 100) / 100;
 
-    // Determine applicable rate based on day of week
-    const day = clockIn.getDay();
-    let appliedRate = shift.weekday_rate || 0;
+    console.log(`[KIOSK CLOCKOUT] ⏱ Calculated hours: ${hoursWorked}h (break: ${shift.break_minutes || 0} min)`);
 
-    if (day === 0) appliedRate = shift.sunday_rate || appliedRate;
-    else if (day === 6) appliedRate = shift.saturday_rate || appliedRate;
-    // TODO: Check for public holidays
+    // Determine payday_type based on date and holidays
+    const paydayType = await determinePaydayType(clockIn, shift.business_code);
+    console.log(`[KIOSK CLOCKOUT] 📅 Payday type: ${paydayType}`);
 
-    // Calculate total pay
-    const totalPay = Math.round(hoursWorked * appliedRate * 100) / 100;
+    // Calculate pay using the utility
+    const rates = {
+      weekday_rate: shift.weekday_rate,
+      saturday_rate: shift.saturday_rate,
+      sunday_rate: shift.sunday_rate,
+      public_holiday_rate: shift.public_holiday_rate,
+      overtime_rate: shift.overtime_rate
+    };
 
-    // Update shift with clock_out, hours_worked, and payment info
+    const { appliedRate, totalPay } = calculateShiftPay({
+      hoursWorked,
+      paydayType,
+      rates
+    });
+
+    console.log(`[KIOSK CLOCKOUT] 💰 Applied rate: $${appliedRate}, Total pay: $${totalPay}`);
+
+    // Update shift with clock_out, hours_worked, payday_type, and payment info
     const updateQuery = `
       UPDATE shifts
       SET clock_out = NOW(),
           hours_worked = ?,
+          payday_type = ?,
           applied_rate = ?,
           total_pay = ?,
           shift_state = 'COMPLETED'
       WHERE id = ?
     `;
 
-    db.query(updateQuery, [hoursWorked, appliedRate, totalPay, id], (err, result) => {
-      if (err) {
-        console.error("Error clocking out:", err);
-        return res.status(500).json({ success: false, error: "Failed to clock out" });
-      }
+    await db.query(updateQuery, [hoursWorked, paydayType, appliedRate, totalPay, id]);
 
-      console.log(`✅ Clock-out: Shift ID ${id} → ${hoursWorked}h worked (${shift.break_minutes || 0} min break) → $${totalPay}`);
-      res.json({
-        success: true,
-        message: "Shift completed",
-        shift: {
-          shift_id: id,
-          clock_in: shift.clock_in,
-          clock_out: clockOut.toISOString(),
-          break_minutes: shift.break_minutes || 0,
-          hours_worked: hoursWorked,
-          applied_rate: appliedRate,
-          total_pay: totalPay,
-          shift_state: "COMPLETED"
-        }
-      });
+    console.log(`[KIOSK CLOCKOUT] ✅ Shift ${id} clocked out successfully`);
+    res.json({
+      success: true,
+      message: "Shift completed",
+      shift: {
+        shift_id: id,
+        clock_in: shift.clock_in,
+        clock_out: clockOut.toISOString(),
+        break_minutes: shift.break_minutes || 0,
+        hours_worked: hoursWorked,
+        payday_type: paydayType,
+        applied_rate: appliedRate,
+        total_pay: totalPay,
+        shift_state: "COMPLETED"
+      }
     });
-  });
+  } catch (err) {
+    console.error(`[KIOSK CLOCKOUT] ❌ Error:`, err.message);
+    console.error(`[KIOSK CLOCKOUT] ❌ Stack:`, err.stack);
+    res.status(500).json({ success: false, error: err.message || "Failed to clock out" });
+  }
 });
 
 // ===== Offline Queue Sync Endpoint =====
@@ -687,7 +661,7 @@ router.post('/sync', async (req, res) => {
   console.log(`🔄 Sync request received: ${events.length} events`);
 
   const results = [];
-  const connection = await db.promise().getConnection();
+  const connection = await db.getConnection();
 
   try {
     await connection.beginTransaction();
@@ -769,11 +743,13 @@ router.post('/sync', async (req, res) => {
               throw new Error('Missing shift_id for clockout');
             }
 
-            // Get shift details for pay calculation
+            // Get shift details for pay calculation including business_code
             const [shifts] = await connection.query(`
-              SELECT s.*, pr.weekday_rate, pr.saturday_rate, pr.sunday_rate, pr.public_holiday_rate
+              SELECT s.*, v.business_code,
+                     pr.weekday_rate, pr.saturday_rate, pr.sunday_rate, pr.public_holiday_rate
               FROM shifts s
               LEFT JOIN pay_rates pr ON s.staff_code = pr.staff_code
+              LEFT JOIN venues v ON s.venue_code = v.venue_code
               WHERE s.id = ? AND s.shift_state IN ('ACTIVE', 'ON_BREAK')
               LIMIT 1
             `, [shift_id]);
@@ -791,22 +767,31 @@ router.post('/sync', async (req, res) => {
             const breakHours = (shift.break_minutes || 0) / 60;
             const hoursWorked = Math.round((totalHours - breakHours) * 100) / 100;
 
-            // Determine rate
-            const day = clockIn.getDay();
-            let appliedRate = shift.weekday_rate || 0;
-            if (day === 0) appliedRate = shift.sunday_rate || appliedRate;
-            else if (day === 6) appliedRate = shift.saturday_rate || appliedRate;
+            // Determine payday_type based on date and holidays
+            const paydayType = await determinePaydayType(clockIn, shift.business_code);
 
-            const totalPay = Math.round(hoursWorked * appliedRate * 100) / 100;
+            // Calculate pay using the utility
+            const syncRates = {
+              weekday_rate: shift.weekday_rate,
+              saturday_rate: shift.saturday_rate,
+              sunday_rate: shift.sunday_rate,
+              public_holiday_rate: shift.public_holiday_rate
+            };
+
+            const { appliedRate, totalPay } = calculateShiftPay({
+              hoursWorked,
+              paydayType,
+              rates: syncRates
+            });
 
             // Update shift
             await connection.query(`
               UPDATE shifts
-              SET clock_out = ?, hours_worked = ?, applied_rate = ?, total_pay = ?, shift_state = 'COMPLETED'
+              SET clock_out = ?, hours_worked = ?, payday_type = ?, applied_rate = ?, total_pay = ?, shift_state = 'COMPLETED'
               WHERE id = ?
-            `, [timestamp, hoursWorked, appliedRate, totalPay, shift_id]);
+            `, [timestamp, hoursWorked, paydayType, appliedRate, totalPay, shift_id]);
 
-            console.log(`✅ Synced clockout: Shift ${shift_id} → ${hoursWorked}h @ $${appliedRate} = $${totalPay}`);
+            console.log(`✅ Synced clockout: Shift ${shift_id} → ${hoursWorked}h @ $${appliedRate} = $${totalPay} [${paydayType}]`);
             break;
 
           case 'breakin':

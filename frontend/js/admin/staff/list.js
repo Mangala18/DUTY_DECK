@@ -5,7 +5,7 @@
 
 import { apiRequest } from '../../utils/api.js';
 import { Storage } from '../../utils/storage.js';
-import { showLoading, renderError, showEmptyState, showToast } from '../../utils/ui.js';
+import { showToast } from '../../utils/ui.js';
 
 // Module state
 let staffData = [];
@@ -98,12 +98,26 @@ export async function loadStaffList() {
     const staffListContainer = document.getElementById('staffList');
     if (!staffListContainer) return;
 
+    const tableContent = staffListContainer.querySelector('.table-content');
+    if (!tableContent) return;
+
     try {
-        showLoading('staffList', 'Loading staff...');
+        // Show loading state
+        tableContent.innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-spinner fa-spin fa-2x text-primary mb-3"></i>
+                <p class="text-muted">Loading staff...</p>
+            </div>
+        `;
 
         const businessCode = Storage.getUserBusinessCode();
         if (!businessCode) {
-            renderError('staffList', 'Unable to determine business context');
+            tableContent.innerHTML = `
+                <div class="text-center text-danger py-5">
+                    <i class="fas fa-exclamation-circle fa-2x mb-3"></i>
+                    <h5>Unable to determine business context</h5>
+                </div>
+            `;
             return;
         }
 
@@ -118,16 +132,34 @@ export async function loadStaffList() {
 
         const response = await apiRequest(`/system-admin/staff?${params.toString()}`);
 
+        console.log('📊 Staff API Response:', response);
+        console.log('📊 Response success:', response.success);
+        console.log('📊 Response data:', response.data);
+
         if (response.success) {
             staffData = response.data || [];
+            console.log('📊 Staff data loaded:', staffData.length, 'staff members');
+            console.log('📊 First staff member sample:', staffData[0]);
             renderStaffList(staffData);
             updateStaffCount(staffData.length);
         } else {
-            renderError('staffList', response.error || 'Failed to fetch staff');
+            tableContent.innerHTML = `
+                <div class="text-center text-danger py-5">
+                    <i class="fas fa-exclamation-circle fa-2x mb-3"></i>
+                    <h5>Failed to load staff</h5>
+                    <p>${response.error || 'Unknown error occurred'}</p>
+                </div>
+            `;
         }
     } catch (error) {
         console.error('Error loading staff:', error);
-        renderError('staffList', 'Failed to load staff: ' + error.message);
+        tableContent.innerHTML = `
+            <div class="text-center text-danger py-5">
+                <i class="fas fa-exclamation-circle fa-2x mb-3"></i>
+                <h5>Failed to load staff</h5>
+                <p>${error.message || 'Network error occurred'}</p>
+            </div>
+        `;
     }
 }
 
@@ -136,16 +168,38 @@ export async function loadStaffList() {
  * @param {Array} staff - Array of staff objects
  */
 function renderStaffList(staff) {
+    console.log('🎨 renderStaffList called with', staff.length, 'staff members');
+
     const container = document.getElementById('staffList');
-    if (!container) return;
+    if (!container) {
+        console.error('❌ #staffList container not found');
+        return;
+    }
+
+    // Get the table-content div inside staffList
+    const tableContent = container.querySelector('.table-content');
+    if (!tableContent) {
+        console.error('❌ .table-content not found inside #staffList');
+        return;
+    }
+
+    console.log('✅ Found container and tableContent elements');
 
     if (staff.length === 0) {
-        showEmptyState('staffList', 'No staff found', 'bi-people');
+        console.log('ℹ️ No staff to display, showing empty state');
+
+        tableContent.innerHTML = `
+            <div class="text-center text-muted py-5">
+                <i class="fas fa-users display-1 mb-3"></i>
+                <h5>No staff found</h5>
+                <p>Try adjusting your filters or add new staff members</p>
+            </div>
+        `;
         return;
     }
 
     let html = `
-        <table class="table table-hover">
+        <table class="data-grid">
             <thead>
                 <tr>
                     <th>Staff Code</th>
@@ -166,21 +220,23 @@ function renderStaffList(staff) {
             ? '<span class="badge bg-success">Active</span>'
             : '<span class="badge bg-secondary">Inactive</span>';
 
+        const fullName = `${s.first_name || ''} ${s.middle_name ? s.middle_name + ' ' : ''}${s.last_name || ''}`.trim();
+
         html += `
             <tr>
-                <td>${s.staff_code}</td>
-                <td>${s.full_name || ''}</td>
-                <td>${s.venue_name || ''}</td>
+                <td><strong>${s.staff_code}</strong></td>
+                <td>${fullName || s.full_name || '-'}</td>
+                <td>${s.venue_name || '-'}</td>
                 <td>${s.role_title || '-'}</td>
-                <td>${s.employment_type || '-'}</td>
+                <td>${formatEmploymentType(s.employment_type)}</td>
                 <td>${statusBadge}</td>
-                <td><span class="badge bg-info">${s.access_level || '-'}</span></td>
+                <td><span class="badge bg-info">${formatAccessLevel(s.access_level)}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="editStaff('${s.staff_code}')">
-                        <i class="bi bi-pencil"></i>
+                    <button class="btn btn-sm btn-primary" onclick="window.editStaff('${s.staff_code}')">
+                        <i class="fas fa-edit"></i>
                     </button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteStaff('${s.staff_code}', '${s.full_name}')">
-                        <i class="bi bi-trash"></i>
+                    <button class="btn btn-sm btn-danger" onclick="window.deleteStaff('${s.staff_code}', '${(fullName || s.full_name || '').replace(/'/g, "\\'")}')">
+                        <i class="fas fa-trash"></i>
                     </button>
                 </td>
             </tr>
@@ -188,7 +244,37 @@ function renderStaffList(staff) {
     });
 
     html += '</tbody></table>';
-    container.innerHTML = html;
+
+    console.log('✅ Rendering table with', staff.length, 'rows');
+    console.log('📝 HTML length:', html.length, 'characters');
+    tableContent.innerHTML = html;
+    console.log('✅ Table rendered successfully');
+}
+
+/**
+ * Format employment type for display
+ */
+function formatEmploymentType(type) {
+    const map = {
+        'full_time': 'Full Time',
+        'part_time': 'Part Time',
+        'casual': 'Casual',
+        'contract': 'Contract'
+    };
+    return map[type] || type || '-';
+}
+
+/**
+ * Format access level for display
+ */
+function formatAccessLevel(level) {
+    const map = {
+        'system_admin': 'System Admin',
+        'manager': 'Manager',
+        'supervisor': 'Supervisor',
+        'employee': 'Employee'
+    };
+    return map[level] || level || '-';
 }
 
 /**

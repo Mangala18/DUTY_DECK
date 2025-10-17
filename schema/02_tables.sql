@@ -56,7 +56,7 @@ CREATE TABLE `pay_rates` (
   KEY `idx_rate_staff_code` (`staff_code`),
   KEY `idx_pay_staff` (`staff_code`),
   CONSTRAINT `pay_rates_ibfk_1` FOREIGN KEY (`staff_code`) REFERENCES `staff` (`staff_code`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -119,7 +119,7 @@ CREATE TABLE `shifts` (
   CONSTRAINT `shifts_ibfk_1` FOREIGN KEY (`staff_code`) REFERENCES `staff` (`staff_code`) ON DELETE CASCADE,
   CONSTRAINT `shifts_ibfk_2` FOREIGN KEY (`venue_code`) REFERENCES `venues` (`venue_code`) ON DELETE CASCADE,
   CONSTRAINT `shifts_ibfk_3` FOREIGN KEY (`roster_id`) REFERENCES `rosters` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=41 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=43 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -154,7 +154,7 @@ CREATE TABLE `staff` (
   CONSTRAINT `staff_ibfk_1` FOREIGN KEY (`business_code`) REFERENCES `businesses` (`business_code`) ON DELETE CASCADE,
   CONSTRAINT `staff_ibfk_2` FOREIGN KEY (`venue_code`) REFERENCES `venues` (`venue_code`) ON DELETE CASCADE,
   CONSTRAINT `chk_staff_type_scope` CHECK ((((`staff_type` = _utf8mb4'system_admin') and (`venue_code` is null)) or ((`staff_type` = _utf8mb4'venue_staff') and (`venue_code` is not null))))
-) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -182,7 +182,7 @@ CREATE TABLE `staff_compliance` (
   PRIMARY KEY (`id`),
   KEY `idx_compliance_staff_code` (`staff_code`),
   CONSTRAINT `staff_compliance_ibfk_1` FOREIGN KEY (`staff_code`) REFERENCES `staff` (`staff_code`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -232,7 +232,7 @@ CREATE TABLE `users` (
   UNIQUE KEY `email` (`email`),
   KEY `idx_user_staff_code` (`staff_code`),
   CONSTRAINT `users_ibfk_3` FOREIGN KEY (`staff_code`) REFERENCES `staff` (`staff_code`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -262,7 +262,7 @@ CREATE TABLE `venues` (
   KEY `idx_venue_code` (`venue_code`),
   KEY `idx_venue_business_code` (`business_code`),
   CONSTRAINT `venues_ibfk_1` FOREIGN KEY (`business_code`) REFERENCES `businesses` (`business_code`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
@@ -274,4 +274,4 @@ CREATE TABLE `venues` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-10-11 16:16:56
+-- Dump completed on 2025-10-15  8:55:46

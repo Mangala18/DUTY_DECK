@@ -1,5 +1,9 @@
 const express = require("express");
 const staffRoutes = require("./staffRoutes");
+const { addVenue, updateVenue, deleteVenue, getVenueByCode } = require("../controllers/venueController");
+const { getUserSchedule, getScheduleByDateRange } = require("../controllers/scheduleController");
+const { getTimesheetStaff, getStaffTimesheets, getTimesheetsByDateRange, bulkUpdateTimesheets, exportTimesheetsCSV, getTimesheetById, updateTimesheet } = require("../controllers/timesheetController");
+const { getPayrollStaffSummary, getPayrollBreakdown } = require("../controllers/payrollController");
 const router = express.Router();
 
 // ============================
@@ -62,5 +66,72 @@ router.use("/staff", staffRoutes);
 
 // Add any system-admin-specific endpoints here that don't fit the shared staff model
 // Example: System-wide reports, bulk operations, etc.
+
+// ============================
+// VENUE MANAGEMENT ROUTES
+// ============================
+
+/**
+ * Venue Management Endpoints
+ * - POST   /api/system-admin/venues              Create a new venue
+ * - GET    /api/system-admin/venues/:code        Get single venue details
+ * - PUT    /api/system-admin/venues/:code        Update an existing venue
+ * - DELETE /api/system-admin/venues/:code        Delete a venue
+ * - GET    /api/system-admin/staff/venues        List all venues (handled by staffRoutes)
+ */
+
+router.post("/venues", addVenue);
+router.get("/venues/:venue_code", getVenueByCode);
+router.put("/venues/:venue_code", updateVenue);
+router.delete("/venues/:venue_code", deleteVenue);
+
+// ============================
+// SCHEDULE MANAGEMENT ROUTES
+// ============================
+
+/**
+ * Schedule Management Endpoints
+ * - GET /api/system-admin/schedules              Get user's upcoming shifts
+ * - GET /api/system-admin/schedules/range        Get shifts for a date range
+ */
+
+router.get("/schedules", getUserSchedule);
+router.get("/schedules/range", getScheduleByDateRange);
+
+// ============================
+// TIMESHEET MANAGEMENT ROUTES
+// ============================
+
+/**
+ * Timesheet Management Endpoints
+ * - GET   /api/system-admin/timesheets/staff         Get staff list with timesheet summaries
+ * - GET   /api/system-admin/timesheets               Get timesheets for a specific staff member
+ * - GET   /api/system-admin/timesheets/range         Get timesheets by date range
+ * - GET   /api/system-admin/timesheets/:id           Get single timesheet by ID
+ * - PUT   /api/system-admin/timesheets/bulk-update   Bulk update timesheet approval status
+ * - PATCH /api/system-admin/timesheets/:id           Update single timesheet
+ * - GET   /api/system-admin/timesheets/export        Export timesheets to CSV
+ */
+
+router.get("/timesheets/staff", getTimesheetStaff);
+router.get("/timesheets/range", getTimesheetsByDateRange);
+router.get("/timesheets/export", exportTimesheetsCSV);
+router.put("/timesheets/bulk-update", bulkUpdateTimesheets);
+router.get("/timesheets/:id", getTimesheetById);
+router.patch("/timesheets/:id", updateTimesheet);
+router.get("/timesheets", getStaffTimesheets);
+
+// ============================
+// PAYROLL MANAGEMENT ROUTES
+// ============================
+
+/**
+ * Payroll Management Endpoints
+ * - GET /api/system-admin/payroll/staff         Get staff payroll summary (approved shifts)
+ * - GET /api/system-admin/payroll/breakdown     Get detailed payroll breakdown for one staff
+ */
+
+router.get("/payroll/staff", getPayrollStaffSummary);
+router.get("/payroll/breakdown", getPayrollBreakdown);
 
 module.exports = router;
