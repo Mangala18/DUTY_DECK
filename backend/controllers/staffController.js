@@ -17,8 +17,9 @@ exports.getVenues = async (req, res) => {
 
   console.log(`[GET /staff/venues] 👤 User context:`, JSON.stringify(userContext, null, 2));
 
-  // Build cache key based on user context
-  const cacheKey = `venues:${userContext.business_code || 'all'}:${userContext.venue_code || 'all'}:${userContext.access_level}`;
+  // Build cache key based on business only (not venue-specific)
+  // All users should see all venues in their business for venue management
+  const cacheKey = `venues:${userContext.business_code || 'all'}`;
 
   // Try cache first
   const cached = cache.get(cacheKey);
@@ -42,17 +43,14 @@ exports.getVenues = async (req, res) => {
 
   const params = [];
 
-  // Filter by business
+  // Filter by business - show ALL venues in the business
   if (userContext.business_code) {
     query += ' AND business_code = ?';
     params.push(userContext.business_code);
   }
 
-  // Managers and supervisors can only see their own venue
-  if (userContext.access_level !== 'system_admin' && userContext.venue_code) {
-    query += ' AND venue_code = ?';
-    params.push(userContext.venue_code);
-  }
+  // NOTE: Removed venue_code filtering - all users should see all venues in their business
+  // This endpoint is used for venue management, not staff management
 
   query += ' ORDER BY venue_name ASC';
 

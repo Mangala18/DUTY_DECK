@@ -41,10 +41,12 @@ export async function loadVenues() {
 
   try {
     console.log('Loading venues for business:', businessCode);
+    console.log('Current user data:', Storage.getUser());
 
     const response = await apiRequest(`/system-admin/staff/venues?business_code=${businessCode}`);
 
     console.log('Venues response:', response);
+    console.log('Number of venues returned:', response.data?.length || 0);
 
     if (response.success && response.data && response.data.length > 0) {
       renderVenues(response.data);
@@ -53,8 +55,13 @@ export async function loadVenues() {
       venueList.innerHTML = `
         <div class="text-center text-muted py-5">
           <i class="fas fa-building display-1 mb-3"></i>
-          <h5>No venues found</h5>
+          <h5>No venues found for business: ${businessCode}</h5>
           <p>Click "Add Venue" above to create your first venue.</p>
+          <div class="alert alert-info mt-3" role="alert">
+            <small><i class="fas fa-info-circle me-2"></i>
+            <strong>Debug Info:</strong> Searched for venues with business_code = "${businessCode}"
+            </small>
+          </div>
         </div>`;
     }
   } catch (error) {
