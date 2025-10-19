@@ -4,8 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Staff Kiosk - Clock In/Out</title>
+
+  <!--
+    KIOSK SYSTEM OVERVIEW:
+    ======================
+    This is the main kiosk interface for staff clock in/out operations.
+
+    AUTHENTICATION FLOW:
+    1. Venue Login: Kiosk logs in using venue email + password (stored in venues table)
+    2. Staff Selection: Staff member clicks their card from the grid
+    3. PIN Entry: Staff enters 6-digit PIN (stored in users.kiosk_pin)
+    4. Clock Operations: Clock in/out, start/end breaks
+
+    KEY FEATURES:
+    - Real-time status updates (polling every 5 seconds)
+    - Offline support (actions queue in localStorage and sync when online)
+    - Break tracking (accumulates break time, deducts from hours worked)
+    - Automatic pay calculation (based on payday type and rates)
+    - Visual status indicators (green=active, orange=on break, gray=inactive)
+
+    CONNECTED BACKEND:
+    - API Endpoints: /api/kiosk/* (see backend/routes/kiosk.js)
+    - Database Tables: shifts, staff, users, venues, pay_rates, sync_log
+    - JavaScript Logic: js/kiosk/index.js (main), js/kiosk/breaks.js (break tracking)
+
+    For full documentation, see: KIOSK_DOCUMENTATION.md
+  -->
+
+  <!-- TailwindCSS: Utility-first CSS framework for styling -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Bootstrap Icons: Icon library for UI elements -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+
+  <!-- Luxon: DateTime library for timezone conversions -->
   <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
   <script>
     tailwind.config = {
@@ -20,17 +52,32 @@
     }
   </script>
   <style>
+    /*
+      CUSTOM STYLES
+      =============
+      This section defines visual styles for the kiosk interface.
+      To customize appearance, modify colors, animations, or layouts here.
+    */
+
     body {
+      /* Gradient background for the entire page */
       background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
     }
 
-    /* Staff Card Status Animations */
+    /* ============================
+       STAFF CARD ANIMATIONS
+       ============================
+       Staff cards change appearance based on shift state:
+       - status-active: Green glowing border (staff is clocked in)
+       - status-break: Orange glowing border (staff is on break)
+       - status-idle: Gray border (staff is not clocked in)
+    */
     .staff-card {
       position: relative;
       transition: all 0.3s ease;
     }
 
-    /* Border Glow States with Gradient */
+    /* ACTIVE STATE: Green gradient border with pulsing glow */
     .staff-card.status-active {
       border: 3px solid transparent;
       background-image: linear-gradient(white, white),
@@ -42,6 +89,7 @@
       transform: scale(1.02);
     }
 
+    /* ON BREAK STATE: Orange gradient border with pulsing glow */
     .staff-card.status-break {
       border: 3px solid transparent;
       background-image: linear-gradient(white, white),
@@ -53,11 +101,18 @@
       transform: scale(1.02);
     }
 
+    /* IDLE STATE: Simple gray border (not clocked in) */
     .staff-card.status-idle {
       border: 2px solid #d1d5db;
     }
 
-    /* Pulse Animations */
+    /* ============================
+       PULSE ANIMATIONS
+       ============================
+       Creates glowing effect for active and on-break states.
+       To adjust speed: Change animation duration (2s = 2 seconds)
+       To adjust intensity: Change box-shadow opacity values
+    */
     @keyframes pulseGreen {
       0%, 100% {
         box-shadow: 0 0 20px rgba(22, 163, 74, 0.4);
@@ -194,7 +249,13 @@
   </style>
 </head>
 <body class="min-h-screen">
-  <!-- Header -->
+  <!--
+    ========================================
+    HEADER SECTION
+    ========================================
+    Displays venue name, live clock (in venue timezone), and logout button.
+    Updated by: js/kiosk/index.js after venue login
+  -->
   <nav class="bg-slate-800 shadow-lg mb-6">
     <div class="container mx-auto px-4">
       <div class="flex items-center justify-between h-16">
@@ -203,8 +264,13 @@
           <span class="text-xl font-bold">Staff Kiosk</span>
         </a>
         <div class="flex items-center gap-4">
+          <!-- Live clock showing venue's local time (uses Luxon for timezone conversion) -->
           <div id="venueClock" class="text-white text-lg font-semibold"></div>
+
+          <!-- Venue name from kioskContext (set after login) -->
           <span class="text-white" id="venueName">Loading...</span>
+
+          <!-- Logout button (hidden until venue is logged in) -->
           <button class="hidden px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all duration-200" id="logoutBtn">
             <i class="bi bi-box-arrow-right mr-2"></i>Logout
           </button>
@@ -213,13 +279,28 @@
     </div>
   </nav>
 
-  <!-- Offline Banner -->
+  <!--
+    ========================================
+    OFFLINE BANNER
+    ========================================
+    Appears when backend health check fails (hidden by default).
+    Actions are queued in localStorage and synced when backend returns.
+    Controlled by: js/kiosk/index.js health check logic
+  -->
   <div id="offlineBanner" style="display:none; background:#dc2626; color:#fff; padding:12px; text-align:center; font-weight:600; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
     <i class="bi bi-exclamation-triangle-fill mr-2"></i>⚠️ Backend Unavailable — Actions will be queued and synced when backend is restored
   </div>
 
   <div class="container mx-auto px-4 max-w-7xl">
-    <!-- Kiosk Login Form -->
+    <!--
+      ========================================
+      KIOSK LOGIN FORM
+      ========================================
+      Step 1: Venue authentication
+      Credentials: venues.contact_email + venues.kiosk_password
+      API Endpoint: POST /api/kiosk/login
+      Success: Hides this form, shows kioskPanel
+    -->
     <div id="kioskLogin" class="max-w-md mx-auto">
       <div class="bg-white rounded-2xl shadow-2xl p-8">
         <h3 class="text-3xl font-bold text-center mb-6 text-slate-800">
@@ -248,12 +329,32 @@
       </div>
     </div>
 
-    <!-- Kiosk Panel (hidden by default) -->
+    <!--
+      ========================================
+      KIOSK PANEL (Main Interface)
+      ========================================
+      Shown after successful venue login (hidden by default).
+      Contains staff grid, PIN modal, and clock controls.
+    -->
     <div id="kioskPanel" class="hidden">
-      <!-- Staff Grid -->
+      <!--
+        STAFF GRID
+        ==========
+        Dynamically populated with staff cards from API: GET /api/kiosk/staff
+        Each card shows: staff name, code, status badge, time overlay
+        Updated every 5 seconds via status polling
+        Grid layout: 2 cols (mobile) → 3 (tablet) → 4 (desktop) → 5 (wide)
+      -->
       <div id="staffGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 mb-4"></div>
 
-      <!-- Status Legend -->
+      <!--
+        STATUS LEGEND
+        =============
+        Visual guide for staff card colors:
+        - Green: Staff is clocked in (ACTIVE state)
+        - Orange: Staff is on break (ON_BREAK state)
+        - Gray: Staff is not clocked in (NONE state)
+      -->
       <div id="statusLegend" class="bg-white rounded-xl shadow-lg p-4 mb-6 flex items-center justify-center gap-6 text-sm">
         <div class="flex items-center gap-2">
           <span class="inline-block w-3 h-3 rounded-full bg-green-600"></span>
@@ -269,7 +370,16 @@
         </div>
       </div>
 
-      <!-- PIN Entry Modal -->
+      <!--
+        ========================================
+        PIN ENTRY MODAL
+        ========================================
+        Step 2: Staff authentication
+        Appears when staff card is clicked
+        Validates: users.kiosk_pin (6-digit numeric)
+        API Endpoint: POST /api/kiosk/validate-pin
+        Success: Hides modal, shows clockSection
+      -->
       <div class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" id="pinModal">
         <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4">
           <h3 class="text-2xl font-bold text-center mb-4 text-slate-800">
@@ -306,7 +416,15 @@
         </div>
       </div>
 
-      <!-- Clock Section -->
+      <!--
+        ========================================
+        CLOCK SECTION
+        ========================================
+        Step 3: Clock operations interface
+        Shown after successful PIN validation (hidden by default)
+        Contains: status display, clock in/out buttons, break buttons
+        Button states managed by: js/kiosk/index.js based on current shift_state
+      -->
       <div class="hidden bg-white rounded-2xl shadow-2xl overflow-hidden max-w-2xl mx-auto" id="clockSection">
         <div class="bg-blue-600 text-white px-6 py-4 flex items-center justify-between">
           <h5 class="text-xl font-bold flex items-center">
@@ -318,14 +436,23 @@
           </button>
         </div>
         <div class="p-6">
-          <!-- Status -->
+          <!-- Current shift status display -->
           <div class="mb-6">
             <div id="statusDisplay" class="px-6 py-4 bg-blue-100 text-blue-800 rounded-xl text-center font-semibold">
               Loading status...
             </div>
           </div>
 
-          <!-- Buttons -->
+          <!--
+            CLOCK IN/OUT BUTTONS
+            ====================
+            Clock In: POST /api/kiosk/shift/:staff_code/clockin
+            Clock Out: POST /api/kiosk/shift/:id/clockout
+            Button states:
+            - shift_state = NONE: Clock In enabled, Clock Out disabled
+            - shift_state = ACTIVE: Clock In disabled, Clock Out enabled
+            - shift_state = ON_BREAK: Both disabled (must end break first)
+          -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <button id="clockInBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
               <i class="bi bi-play-circle mr-2"></i> Clock In
@@ -335,7 +462,17 @@
             </button>
           </div>
 
-          <!-- Break Buttons (Phase 3 Stage 2) -->
+          <!--
+            BREAK BUTTONS
+            =============
+            Start Break: POST /api/kiosk/shift/:id/breakin
+            End Break: POST /api/kiosk/shift/:id/breakout
+            Button states:
+            - shift_state = ACTIVE: Start Break enabled, End Break disabled
+            - shift_state = ON_BREAK: Start Break disabled, End Break enabled
+            - shift_state = NONE: Both disabled (must clock in first)
+            Break time accumulates and is deducted from hours_worked on clock out
+          -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <button id="breakInBtn" class="d-none bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-4 rounded-xl transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
               <i class="bi bi-pause-circle mr-2"></i> Start Break
@@ -345,14 +482,21 @@
             </button>
           </div>
 
-          <!-- Message -->
+          <!-- Success/error messages -->
           <div id="message" class="hidden mt-4 px-6 py-4 rounded-xl"></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Idle Screen Overlay -->
+  <!--
+    ========================================
+    IDLE SCREEN OVERLAY
+    ========================================
+    Appears after period of inactivity (configurable)
+    Touch anywhere to dismiss and wake screen
+    Managed by: js/kiosk/index.js idle timer
+  -->
   <div id="idleOverlay" class="idle-overlay hidden">
     <div class="text-center text-white">
       <i class="bi bi-moon-stars text-6xl mb-4"></i>
@@ -361,10 +505,33 @@
     </div>
   </div>
 
-  <!-- System Status Indicator (Step 5: Production Readiness) -->
+  <!--
+    ========================================
+    SYSTEM STATUS INDICATOR
+    ========================================
+    Shows backend connectivity status (bottom-right corner)
+    States:
+    - Online (green): Backend healthy, normal operation
+    - Offline (red): Backend unavailable, actions queued locally
+    - Syncing (yellow): Uploading queued actions to backend
+    Updated by: js/kiosk/index.js health check (every 10 seconds)
+  -->
   <div id="systemStatus" class="status-indicator">Online</div>
 
-  <!-- Phase 3 Stage 2: Modular kiosk with break tracking -->
+  <!--
+    ========================================
+    JAVASCRIPT ENTRY POINT
+    ========================================
+    Main kiosk logic: js/kiosk/index.js (ES6 module)
+    Handles:
+    - Venue login
+    - PIN validation
+    - Clock operations
+    - Status polling
+    - Offline sync
+    - Health checks
+    - UI updates
+  -->
   <script type="module" src="js/kiosk/index.js"></script>
 </body>
 </html>
