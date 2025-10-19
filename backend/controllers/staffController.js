@@ -1,4 +1,3 @@
-const staffModel = require('../models/staffModel');
 const { buildAccessFilter, verifyStaffAccess } = require('../utils/accessHelper');
 const { success, error } = require('../utils/response');
 
@@ -13,9 +12,22 @@ const { success, error } = require('../utils/response');
  */
 exports.getVenues = async (req, res) => {
   const db = require('../config/db');
+  const cache = require('../utils/cache');
   const { userContext } = req;
 
   console.log(`[GET /staff/venues] 👤 User context:`, JSON.stringify(userContext, null, 2));
+
+  // Build cache key based on user context
+  const cacheKey = `venues:${userContext.business_code || 'all'}:${userContext.venue_code || 'all'}:${userContext.access_level}`;
+
+  // Try cache first
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    console.log(`[GET /staff/venues] 💾 Cache HIT:`, cacheKey);
+    return success(res, cached, { source: 'cache' });
+  }
+
+  console.log(`[GET /staff/venues] ❌ Cache MISS:`, cacheKey);
 
   let query = `
     SELECT
@@ -50,7 +62,12 @@ exports.getVenues = async (req, res) => {
   try {
     const [results] = await db.execute(query, params);
     console.log(`[GET /staff/venues] ✅ Results count:`, results.length);
-    return success(res, results);
+
+    // Cache for 6 hours (21600000 ms) - venues rarely change
+    cache.set(cacheKey, results, 21600000);
+    console.log(`[GET /staff/venues] 💾 Cached for 6 hours:`, cacheKey);
+
+    return success(res, results, { source: 'database' });
   } catch (err) {
     console.error(`[GET /staff/venues] ❌ Error:`, err.message);
     return error(res, 500, "Failed to fetch venues");
@@ -60,21 +77,44 @@ exports.getVenues = async (req, res) => {
 /**
  * Get all staff with role-based filtering
  * GET /api/system-admin/staff
+ * Query params: page, limit, venue_code, status, sort, dir
  */
 exports.getStaffList = async (req, res) => {
   const db = require('../config/db');
+  const { buildPagination, formatPaginatedResponse, buildSort } = require('../utils/pagination');
   const { userContext } = req;
   const { venue_code, status } = req.query;
 
   console.log(`[GET /staff] 👤 User context:`, JSON.stringify(userContext, null, 2));
-  console.log(`[GET /staff] 📥 Query params:`, JSON.stringify({ venue_code, status }, null, 2));
+  console.log(`[GET /staff] 📥 Query params:`, JSON.stringify(req.query, null, 2));
+
+  // Build pagination
+  const { page, limit, offset } = buildPagination(req, 100, 1000); // Default 100, max 1000
+
+  // Build sort
+  const allowedSortFields = ['created_at', 'last_name', 'first_name', 'employment_status'];
+  const sort = buildSort(req, allowedSortFields, 'created_at', 'desc');
 
   // Build access filter based on user role
   const { conditions, params } = buildAccessFilter(userContext, { venue_code, status });
 
   console.log(`[GET /staff] 🔐 Access conditions:`, conditions);
-  console.log(`[GET /staff] 📝 Params:`, params);
+  console.log(`[GET /staff] 📄 Pagination: page=${page}, limit=${limit}, offset=${offset}`);
+  console.log(`[GET /staff] 🔀 Sort: ${sort.sql}`);
 
+  // Count query
+  const countQuery = `
+    SELECT COUNT(*) as total
+    FROM staff s
+    LEFT JOIN venues v ON s.venue_code = v.venue_code
+    LEFT JOIN businesses b ON s.business_code = b.business_code
+    LEFT JOIN users u ON s.staff_code = u.staff_code
+    WHERE ${conditions.join(' AND ')}
+  `;
+
+  // Main query with pagination
+  // Note: LIMIT and OFFSET cannot be placeholders in MySQL prepared statements
+  // So we use safe integer interpolation instead
   const query = `
     SELECT
       s.staff_code,
@@ -99,16 +139,23 @@ exports.getStaffList = async (req, res) => {
     LEFT JOIN businesses b ON s.business_code = b.business_code
     LEFT JOIN users u ON s.staff_code = u.staff_code
     WHERE ${conditions.join(' AND ')}
-    ORDER BY s.created_at DESC
+    ORDER BY ${sort.sql}
+    LIMIT ${Number(limit)} OFFSET ${Number(offset)}
   `;
 
   console.log(`[GET /staff] 🔍 Query:`, query.trim());
 
   try {
+    // Get total count
+    const [[{ total }]] = await db.execute(countQuery, params);
+    console.log(`[GET /staff] 📊 Total staff count: ${total}`);
+
+    // Get paginated results (only pass params, not limit/offset since they're now in the SQL string)
     const [results] = await db.execute(query, params);
-    console.log(`[GET /staff] ✅ Results count:`, results.length);
+    console.log(`[GET /staff] ✅ Results count: ${results.length}`);
     console.log(`[GET /staff] ✅ First result sample:`, results[0] ? JSON.stringify(results[0], null, 2) : 'No results');
-    return success(res, results);
+
+    return res.json(formatPaginatedResponse(results, total, page, limit));
   } catch (err) {
     console.error(`[GET /staff] ❌ Error:`, err.message);
     return error(res, 500, "Failed to fetch staff");
@@ -330,6 +377,12 @@ exports.addStaff = async (req, res) => {
     console.log(`[POST /staff] 🔄 Committing transaction...`);
     await connection.commit();
     console.log(`[POST /staff] ✅ Transaction committed successfully`);
+
+    // Invalidate staff and kiosk caches
+    const cache = require('../utils/cache');
+    cache.invalidate('staff:');
+    cache.invalidate('kiosk:staff:');
+    console.log(`[POST /staff] 💾 Invalidated staff caches`);
 
     const response = {
       success: true,

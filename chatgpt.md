@@ -1,122 +1,126 @@
-Perfect — that stack trace reveals the exact failure:
-TypeError: appliedRate.toFixed is not a function
-which means appliedRate is not a number when you call .toFixed() in your calculateShiftPay() utility.
+That backend log gives you the full answer.
+The cause is explicit in MySQL’s own error:
 
-That’s why your kiosk clockout is returning a 500.
-
-✅ Root cause
-
-In MySQL, when you fetch numeric columns such as DECIMAL(10,2) via mysql2/promise, they are returned as strings by default (to preserve precision).
-
-Example:
-
-rate.weekday_rate // "25.00" (string)
+❌ Error: Incorrect arguments to mysqld_stmt_execute
 
 
-Then your code likely has this:
+That means the number or type of parameters you passed to db.execute() does not match the placeholders (?) in your SQL.
 
-const total_pay = (hours_worked * appliedRate).toFixed(2);
+1. The failing line
 
+You’re executing something like:
 
-When appliedRate is a string, the multiplication works (JavaScript coerces it),
-but .toFixed() cannot be called on a string — hence the crash.
-
-✅ Quick, correct fix
-
-Edit your /backend/utils/payCalculator.js (around line 95)
-and explicitly convert all rate values to numbers before using them.
-
-Replace your function with this safe version:
-
-export const calculateShiftPay = (shift, rate) => {
-  const hours = Number(shift.hours_worked || 0);
-  const paydayType = shift.payday_type?.toUpperCase() || 'WEEKDAY';
-
-  // Convert all rates to numbers to avoid .toFixed() errors
-  const weekday = Number(rate.weekday_rate || 0);
-  const saturday = Number(rate.saturday_rate || 0);
-  const sunday = Number(rate.sunday_rate || 0);
-  const publicHoliday = Number(rate.public_holiday_rate || 0);
-  const overtime = Number(rate.overtime_rate || 0);
-
-  let appliedRate = 0;
-  switch (paydayType) {
-    case 'SATURDAY':
-      appliedRate = saturday;
-      break;
-    case 'SUNDAY':
-      appliedRate = sunday;
-      break;
-    case 'PUBLIC_HOLIDAY':
-      appliedRate = publicHoliday;
-      break;
-    case 'OVERTIME':
-      appliedRate = overtime;
-      break;
-    default:
-      appliedRate = weekday;
-  }
-
-  const totalPay = Number((hours * appliedRate).toFixed(2));
-  return { applied_rate: appliedRate, total_pay: totalPay };
-};
-
-✅ Restart backend and retry
-npm run dev
+const [rows] = await db.execute(query, [business_code, limit, offset]);
 
 
-Then clock out again.
+Your SQL has three ? placeholders:
 
-You should now see clean output like:
-
-[KIOSK CLOCKOUT] 🔍 Shift ID: 47
-[KIOSK CLOCKOUT] ⏱ Calculated hours: 1.06h
-[KIOSK CLOCKOUT] 💰 Applied rate: 25, Total pay: 26.50
-[KIOSK CLOCKOUT] ✅ Shift 47 clocked out successfully.
-
-✅ Why this fix is universal
-
-This numeric conversion:
-
-Number(rate.weekday_rate || 0)
+WHERE s.business_code = ? AND s.staff_type = 'venue_staff'
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?
 
 
-ensures that regardless of whether the database driver returns "25.00" or 25,
-the value will always be numeric before math or .toFixed() operations.
+That looks correct — three parameters, three question marks.
+So the problem is type or undefined values, not the count.
 
-This same pattern should be applied in:
+2. Check actual values passed
 
-calculateShiftPay()
+Before db.execute(), log them:
 
-any future pay or overtime computations
-
-any payroll aggregation that multiplies rate × hours
-
-✅ Optional: enforce numeric casting globally
-
-If you want to fix this at the DB level instead of every calculation,
-you can use mysql2’s connection option:
-
-in /backend/config/db.js:
-
-const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  namedPlaceholders: true,
-  decimalNumbers: true, // << ensures DECIMAL and NUMERIC come as numbers
-});
+console.log('[GET /staff] Params:', business_code, limit, offset);
 
 
-That will automatically convert all DECIMAL fields to JavaScript numbers.
-Then you can remove explicit Number() conversions later.
+Expected:
 
-✅ Summary
-Problem	Fix
-TypeError: appliedRate.toFixed is not a function	MySQL returned DECIMAL as string
-Quick fix	Wrap rates in Number() before using .toFixed()
-Permanent solution	Add decimalNumbers: true in db pool config
-Result	Clock-out endpoint runs successfully, applies pay rate correctly, returns valid JSON
+Params: BUS001 100 0
 
-Once you make this change, your clock-out route will calculate and store correct pay without crashing, and you’ll get clean logs and accurate total_pay values for every shift.
+
+If you see:
+
+Params: undefined undefined undefined
+
+
+or even
+
+Params: BUS001 undefined undefined
+
+
+→ MySQL will throw “Incorrect arguments” because it can’t bind undefined/null into numeric placeholders.
+
+3. Confirm variable names
+
+Most likely the variables in the call don’t match what your pagination util returned.
+
+Typical correct line:
+
+const { page, limit, offset } = buildPagination(req);
+const business_code = req.userContext?.business_code;
+const [rows] = await db.execute(query, [business_code, limit, offset]);
+
+
+If you accidentally wrote:
+
+const [rows] = await db.execute(query, [req.business_code, limit, offset]);
+
+
+or similar, req.business_code is undefined, causing the same error.
+
+4. Type mismatch example
+
+If limit or offset are strings instead of numbers, older MySQL drivers can choke.
+
+Force type conversion:
+
+await db.execute(query, [business_code, Number(limit), Number(offset)]);
+
+5. Quick diagnostic patch
+
+Temporarily wrap your call like this:
+
+try {
+  console.log('[GET /staff] Final params', business_code, limit, offset);
+  const [rows] = await db.execute(query, [business_code, limit, offset]);
+  ...
+} catch (err) {
+  console.error('[GET /staff] MySQL params error', { business_code, limit, offset }, err);
+  throw err;
+}
+
+
+You’ll see immediately which variable is undefined or non-numeric.
+
+6. Root cause checklist
+Likely cause	Symptom	Fix
+req.userContext missing	business_code undefined	ensure auth middleware attaches user context
+buildPagination returned NaN	limit/offset invalid	add Number() cast defaults
+Param order mismatch	using wrong order in array	match to SQL placeholder order
+Strings for limit/offset	MySQL type error	cast to Number()
+7. Permanent safe pattern
+
+To bulletproof this endpoint, enforce defaults:
+
+const business_code = req.userContext?.business_code || null;
+const { limit, offset } = buildPagination(req);
+if (!business_code) return res.status(400).json({ success:false, error:'Missing business_code' });
+
+const [rows] = await db.execute(
+  query,
+  [business_code, Number(limit) || 100, Number(offset) || 0]
+);
+
+8. After the fix
+
+Run again and the log should show:
+
+[GET /staff] 📊 Total staff count: 17
+
+
+and the frontend’s "Failed to fetch staff" will disappear.
+
+So your immediate action:
+
+Log business_code, limit, offset right before the db.execute() call.
+
+You’ll see one of them undefined or not numeric.
+
+Fix source variable or add Number() cast as shown.

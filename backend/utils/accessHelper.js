@@ -34,7 +34,8 @@ function buildAccessFilter(userContext, filters = {}) {
   }
 
   // Always exclude system admins from the list (only show venue_staff)
-  conditions.push("s.staff_type = 'venue_staff'");
+  conditions.push("s.staff_type = ?");
+  params.push('venue_staff');
 
   // Apply additional filters
   if (filters.venue_code && filters.venue_code !== 'all') {

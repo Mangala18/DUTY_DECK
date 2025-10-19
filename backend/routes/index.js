@@ -13,6 +13,7 @@ const systemAdminRoutes = require('./systemAdminRoutes');
 const staffRoutes = require('./staffRoutes');
 const kioskRoutes = require('./kiosk');
 const dashboardRoutes = require('./dashboardRoutes');
+const cacheRoutes = require('./cacheRoutes');
 
 // Mount routes
 router.use('/', authRoutes);                        // POST /api/login, /api/logout (at root level)
@@ -21,5 +22,6 @@ router.use('/system-admin', systemAdminRoutes);     // System admin routes (lega
 router.use('/system-admin/dashboard', dashboardRoutes); // Dashboard metrics
 router.use('/staff', staffRoutes);                  // Shared staff management routes
 router.use('/kiosk', kioskRoutes);                  // Kiosk clock-in/out routes
+router.use('/cache', cacheRoutes);                  // Cache management routes
 
 module.exports = router;

@@ -5,7 +5,7 @@
 
 import { apiRequest } from '../../utils/api.js';
 import { Storage } from '../../utils/storage.js';
-import { showToast } from '../../utils/ui.js';
+import { showToast, debounce } from '../../utils/ui.js';
 
 // Module state
 let staffData = [];
@@ -21,9 +21,10 @@ export async function loadVenues() {
     try {
         const businessCode = Storage.getUserBusinessCode();
 
-        if (!businessCode) {
-            console.error('Unable to determine business context');
-            showToast('Unable to determine business context', 'error');
+        // Check if businessCode is valid (not null, undefined, or "null" string)
+        if (!businessCode || businessCode === 'null') {
+            console.error('Unable to determine business context - business_code is missing or invalid:', businessCode);
+            showToast('Unable to determine business context. Please contact your administrator.', 'error');
             return [];
         }
 
@@ -137,11 +138,16 @@ export async function loadStaffList() {
         console.log('📊 Response data:', response.data);
 
         if (response.success) {
-            staffData = response.data || [];
+            // Handle paginated response format: { rows: [...], pagination: {...} }
+            staffData = response.data?.rows || response.data || [];
+            const pagination = response.data?.pagination;
+
             console.log('📊 Staff data loaded:', staffData.length, 'staff members');
+            console.log('📊 Pagination:', pagination);
             console.log('📊 First staff member sample:', staffData[0]);
+
             renderStaffList(staffData);
-            updateStaffCount(staffData.length);
+            updateStaffCount(pagination?.total || staffData.length);
         } else {
             tableContent.innerHTML = `
                 <div class="text-center text-danger py-5">
@@ -315,4 +321,34 @@ export function getStaffData() {
  */
 export function getVenuesData() {
     return venuesData;
+}
+
+/**
+ * Filter staff list by search term (client-side)
+ * @param {string} searchTerm - Search term to filter by
+ */
+export function filterStaffList(searchTerm) {
+    const rows = document.querySelectorAll('#staffList tbody tr');
+    const term = searchTerm.toLowerCase();
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(term) ? '' : 'none';
+    });
+}
+
+/**
+ * Setup staff search with debounce
+ */
+export function setupStaffSearch() {
+    const staffSearchInput = document.getElementById('staffSearchInput');
+    if (staffSearchInput) {
+        const debouncedFilter = debounce((value) => {
+            filterStaffList(value);
+        }, 300);
+
+        staffSearchInput.addEventListener('input', (e) => {
+            debouncedFilter(e.target.value);
+        });
+    }
 }

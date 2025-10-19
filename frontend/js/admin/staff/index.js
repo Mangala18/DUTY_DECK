@@ -10,7 +10,8 @@ import {
     loadStaffList,
     applyStaffFilters,
     getStaffData,
-    getVenuesData
+    getVenuesData,
+    setupStaffSearch
 } from './list.js';
 
 import {
@@ -91,6 +92,9 @@ function setupEventListeners() {
     if (applyFiltersBtn) {
         applyFiltersBtn.onclick = applyStaffFilters;
     }
+
+    // Setup staff search with debounce
+    setupStaffSearch();
 }
 
 // Export all functions

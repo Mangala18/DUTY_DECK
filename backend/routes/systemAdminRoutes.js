@@ -19,8 +19,16 @@ const router = express.Router();
  */
 function injectSystemAdminContext(req, res, next) {
   // Extract business_code and venue_code from query params, body, or headers
-  const business_code = req.query.business_code || req.body.business_code || req.headers['user_business_code'];
-  const venue_code = req.query.venue_code || req.body.venue_code || req.headers['user_venue_code'];
+  let business_code = req.query.business_code || req.body.business_code || req.headers['user_business_code'];
+  let venue_code = req.query.venue_code || req.body.venue_code || req.headers['user_venue_code'];
+
+  // Sanitize: treat "null", "undefined" strings as actual null/undefined
+  if (business_code === 'null' || business_code === 'undefined') {
+    business_code = null;
+  }
+  if (venue_code === 'null' || venue_code === 'undefined') {
+    venue_code = null;
+  }
 
   // Set headers for staffRoutes middleware to consume
   req.headers['user_access_level'] = req.headers['user_access_level'] || 'system_admin';

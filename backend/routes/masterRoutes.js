@@ -1,6 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const db = require("../config/db");
+const cache = require("../utils/cache");
 const router = express.Router();
 
 // Import consolidated validation schemas
@@ -19,8 +20,23 @@ const {
 // Get all businesses
 router.get("/businesses", async (req, res) => {
   try {
+    const cacheKey = 'businesses:all';
+
+    // Try cache first
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      console.log('[GET /businesses] 💾 Cache HIT');
+      return res.json({ success: true, data: cached, source: 'cache' });
+    }
+
+    console.log('[GET /businesses] ❌ Cache MISS');
     const [results] = await db.execute("SELECT * FROM businesses ORDER BY business_name");
-    res.json({ success: true, data: results });
+
+    // Cache for 24 hours (86400000 ms) - businesses rarely change
+    cache.set(cacheKey, results, 86400000);
+    console.log('[GET /businesses] 💾 Cached for 24 hours');
+
+    res.json({ success: true, data: results, source: 'database' });
   } catch (err) {
     console.error("Error fetching businesses:", err);
     res.status(500).json({ success: false, error: "Failed to fetch businesses" });
@@ -47,6 +63,11 @@ router.post("/business", async (req, res) => {
     `;
 
     const [result] = await db.execute(query, [code, name]);
+
+    // Invalidate business cache
+    cache.invalidate('businesses:');
+    console.log('[POST /business] 💾 Invalidated business cache');
+
     res.json({ success: true, business_code: code, id: result.insertId });
   } catch (err) {
     console.error("Error adding business:", err);
@@ -93,6 +114,10 @@ router.put("/business/:business_code", async (req, res) => {
     const query = "UPDATE businesses SET business_name = ? WHERE business_code = ?";
     await db.execute(query, [name, business_code]);
 
+    // Invalidate business cache
+    cache.invalidate('businesses:');
+    console.log('[PUT /business] 💾 Invalidated business cache');
+
     res.json({
       success: true,
       message: "Business updated successfully",
@@ -131,6 +156,10 @@ router.delete("/business/:business_code", async (req, res) => {
       });
     }
 
+    // Invalidate business cache
+    cache.invalidate('businesses:');
+    console.log('[DELETE /business] 💾 Invalidated business cache');
+
     res.json({
       success: true,
       message: "Business deleted successfully"
@@ -148,6 +177,17 @@ router.delete("/business/:business_code", async (req, res) => {
 // Get all venues with business info
 router.get("/venues", async (req, res) => {
   try {
+    const cacheKey = 'master:venues:all';
+
+    // Try cache first
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      console.log('[GET /venues] 💾 Cache HIT');
+      return res.json({ success: true, data: cached, source: 'cache' });
+    }
+
+    console.log('[GET /venues] ❌ Cache MISS');
+
     const query = `
       SELECT v.venue_code,
              v.venue_name,
@@ -163,7 +203,12 @@ router.get("/venues", async (req, res) => {
     `;
 
     const [results] = await db.execute(query);
-    res.json({ success: true, data: results });
+
+    // Cache for 6 hours (21600000 ms) - venues change infrequently
+    cache.set(cacheKey, results, 21600000);
+    console.log('[GET /venues] 💾 Cached for 6 hours');
+
+    res.json({ success: true, data: results, source: 'database' });
   } catch (err) {
     console.error("Error fetching venues:", err);
     res.status(500).json({ success: false, error: "Failed to fetch venues" });
@@ -311,6 +356,12 @@ router.post("/venue-with-admin", async (req, res) => {
     await connection.commit();
     connection.release();
 
+    // Invalidate venue and staff caches
+    cache.invalidate('venues:');
+    cache.invalidate('master:venues:');
+    cache.invalidate('kiosk:staff:');
+    console.log('[POST /venue-with-admin] 💾 Invalidated venue and staff caches');
+
     res.json({
       success: true,
       venue: { venue_code, venue_name },
@@ -440,6 +491,12 @@ router.put("/venue-with-admin/:venue_code", async (req, res) => {
     await connection.commit();
     connection.release();
 
+    // Invalidate venue and staff caches
+    cache.invalidate('venues:');
+    cache.invalidate('master:venues:');
+    cache.invalidate('kiosk:staff:');
+    console.log(`[PUT /venue-with-admin/${venue_code}] 💾 Invalidated venue and staff caches`);
+
     console.log(`[PUT /venue-with-admin/${venue_code}] ✅ Transaction committed successfully`);
 
     const response = {
@@ -515,6 +572,12 @@ router.delete("/venue/:venue_code", async (req, res) => {
       // Commit transaction
       await connection.commit();
       connection.release();
+
+      // Invalidate venue and staff caches
+      cache.invalidate('venues:');
+      cache.invalidate('master:venues:');
+      cache.invalidate('kiosk:staff:');
+      console.log('[DELETE /venue] 💾 Invalidated venue and staff caches');
 
       res.json({
         success: true,

@@ -1,13 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
+const cache = require("../utils/cache");
 const { determinePaydayType, calculateShiftPay } = require("../utils/payCalculator");
 
 // ===== Step 5: DB Connection Keepalive Monitor =====
 // Prevents MySQL idle disconnects with periodic health checks
 setInterval(async () => {
   try {
-    await db.query('SELECT 1');
+    await db.execute('SELECT 1');
     console.log('✅ DB keepalive ping successful');
   } catch (err) {
     console.error('❌ DB keepalive failed:', err.message);
@@ -22,7 +23,7 @@ setInterval(async () => {
     const maxHours = 10;
 
     // Find all shifts that have been active for more than 10 hours
-    const [longShifts] = await db.query(`
+    const [longShifts] = await db.execute(`
       SELECT s.id, s.staff_code, s.clock_in, s.venue_code,
              TIMESTAMPDIFF(HOUR, s.clock_in, NOW()) as hours_open
       FROM shifts s
@@ -43,7 +44,7 @@ setInterval(async () => {
 
       try {
         // Get venue details for business_code
-        const [venueRows] = await db.query(
+        const [venueRows] = await db.execute(
           'SELECT business_code FROM venues WHERE venue_code = ? LIMIT 1',
           [shift.venue_code]
         );
@@ -56,7 +57,7 @@ setInterval(async () => {
         const businessCode = venueRows[0].business_code;
 
         // Get pay rates for calculation
-        const [rates] = await db.query(`
+        const [rates] = await db.execute(`
           SELECT weekday_rate, saturday_rate, sunday_rate, public_holiday_rate
           FROM pay_rates
           WHERE staff_code = ?
@@ -83,7 +84,7 @@ setInterval(async () => {
         const totalPay = payResult.totalPay;
 
         // Close the shift
-        await db.query(`
+        await db.execute(`
           UPDATE shifts
           SET clock_out = ?,
               hours_worked = ?,
@@ -112,7 +113,7 @@ setInterval(async () => {
 router.get('/health', async (_req, res) => {
   try {
     // Test database connectivity with simple query
-    await db.query('SELECT 1');
+    await db.execute('SELECT 1');
 
     res.json({
       healthy: true,
@@ -144,7 +145,7 @@ router.post('/login', async (req, res) => {
       WHERE contact_email = ? AND kiosk_password = ? AND status = 'active'
     `;
 
-    const [results] = await db.query(sql, [username, password]);
+    const [results] = await db.execute(sql, [username, password]);
 
     if (!results || results.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -194,7 +195,7 @@ router.post("/validate-pin", async (req, res) => {
         AND s.employment_status = 'active'
     `;
 
-    const [results] = await db.query(sql, [staff_code, venue_code]);
+    const [results] = await db.execute(sql, [staff_code, venue_code]);
 
     if (!results || results.length === 0) {
       return res.status(404).json({ success: false, error: "Staff not found or not authorized for this venue" });
@@ -231,6 +232,18 @@ router.get("/staff", async (req, res) => {
       return res.status(400).json({ error: "business_code and venue_code are required" });
     }
 
+    // Build cache key
+    const cacheKey = `kiosk:staff:${business_code}:${venue_code}`;
+
+    // Try cache first
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      console.log(`[GET /kiosk/staff] 💾 Cache HIT: ${cacheKey}`);
+      return res.json({ success: true, data: cached, source: 'cache' });
+    }
+
+    console.log(`[GET /kiosk/staff] ❌ Cache MISS: ${cacheKey}`);
+
     // Include both:
     // 1. Staff assigned to this specific venue
     // 2. System admins (venue_code = NULL) who can work at any venue in the business
@@ -250,8 +263,13 @@ router.get("/staff", async (req, res) => {
         s.last_name
     `;
 
-    const [results] = await db.query(sql, [business_code, venue_code]);
-    res.json({ success: true, data: results });
+    const [results] = await db.execute(sql, [business_code, venue_code]);
+
+    // Cache for 30 minutes (1800000 ms) - staff list changes infrequently
+    cache.set(cacheKey, results, 1800000);
+    console.log(`[GET /kiosk/staff] 💾 Cached for 30 minutes: ${cacheKey}`);
+
+    res.json({ success: true, data: results, source: 'database' });
   } catch (err) {
     console.error("Error fetching kiosk staff:", err);
     res.status(500).json({ error: "Failed to fetch staff" });
@@ -310,7 +328,7 @@ router.get("/status/venue/:venue_code", async (req, res) => {
         s.last_name
     `;
 
-    const [rows] = await db.query(query, [venue_code, business_code, venue_code]);
+    const [rows] = await db.execute(query, [venue_code, business_code, venue_code]);
 
     console.log(`✅ Batch status: ${rows.length} staff records (venue + system admins) for venue ${venue_code}`);
     res.json({ success: true, data: rows });
@@ -342,7 +360,7 @@ router.get("/status/:staff_code", async (req, res) => {
       LIMIT 1
     `;
 
-    const [anyShifts] = await db.query(anyShiftQuery, [staff_code]);
+    const [anyShifts] = await db.execute(anyShiftQuery, [staff_code]);
 
     if (!anyShifts || anyShifts.length === 0) {
       return res.json({ active: false });
@@ -400,7 +418,7 @@ router.post("/shift/:staff_code/clockin", async (req, res) => {
     await connection.beginTransaction();
 
     // Lock any existing open shifts for this staff (FOR UPDATE prevents race conditions)
-    const [openShifts] = await connection.query(`
+    const [openShifts] = await connection.execute(`
       SELECT id, shift_state FROM shifts
       WHERE staff_code = ? AND shift_state IN ('ACTIVE', 'ON_BREAK')
       FOR UPDATE
@@ -421,7 +439,7 @@ router.post("/shift/:staff_code/clockin", async (req, res) => {
     }
 
     // Safe to insert new shift - no active shift exists
-    const [result] = await connection.query(`
+    const [result] = await connection.execute(`
       INSERT INTO shifts (staff_code, venue_code, clock_in, shift_state, last_action_time)
       VALUES (?, ?, NOW(), 'ACTIVE', NOW())
     `, [staff_code, venue_code]);
@@ -457,7 +475,7 @@ router.post("/shift/:id/breakin", async (req, res) => {
       WHERE id = ? AND shift_state = 'ACTIVE'
     `;
 
-    const [result] = await db.query(updateQuery, [id]);
+    const [result] = await db.execute(updateQuery, [id]);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({
@@ -491,7 +509,7 @@ router.post("/shift/:id/breakout", async (req, res) => {
       WHERE id = ? AND shift_state = 'ON_BREAK'
     `;
 
-    const [result] = await db.query(updateQuery, [id]);
+    const [result] = await db.execute(updateQuery, [id]);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({
@@ -502,7 +520,7 @@ router.post("/shift/:id/breakout", async (req, res) => {
 
     // Get updated break_minutes
     const selectQuery = `SELECT break_minutes FROM shifts WHERE id = ?`;
-    const [shifts] = await db.query(selectQuery, [id]);
+    const [shifts] = await db.execute(selectQuery, [id]);
 
     if (!shifts || shifts.length === 0) {
       return res.json({
@@ -542,7 +560,7 @@ router.post("/shift/:id/clockout", async (req, res) => {
       LIMIT 1
     `;
 
-    const [shifts] = await db.query(selectQuery, [id]);
+    const [shifts] = await db.execute(selectQuery, [id]);
 
     if (!shifts || shifts.length === 0) {
       console.error(`[KIOSK CLOCKOUT] ❌ No active shift found with ID ${id}`);
@@ -615,7 +633,7 @@ router.post("/shift/:id/clockout", async (req, res) => {
       WHERE id = ?
     `;
 
-    await db.query(updateQuery, [hoursWorked, paydayType, appliedRate, totalPay, id]);
+    await db.execute(updateQuery, [hoursWorked, paydayType, appliedRate, totalPay, id]);
 
     console.log(`[KIOSK CLOCKOUT] ✅ Shift ${id} clocked out successfully`);
     res.json({
@@ -684,7 +702,7 @@ router.post('/sync', async (req, res) => {
 
       try {
         // Check if event already processed (idempotency check)
-        const [dupes] = await connection.query(
+        const [dupes] = await connection.execute(
           'SELECT id, status FROM sync_log WHERE offline_id = ?',
           [offline_id]
         );
@@ -704,7 +722,7 @@ router.post('/sync', async (req, res) => {
             }
 
             // Check for existing active shift (Step 3: Conflict Detection)
-            const [existingShifts] = await connection.query(
+            const [existingShifts] = await connection.execute(
               'SELECT id, shift_state FROM shifts WHERE staff_code = ? AND shift_state IN ("ACTIVE", "ON_BREAK") LIMIT 1',
               [staff_code]
             );
@@ -714,7 +732,7 @@ router.post('/sync', async (req, res) => {
               console.warn(`⚠️  Sync conflict: Staff ${staff_code} already has active shift ${existingShifts[0].id}`);
 
               // Log conflict to sync_log
-              await connection.query(`
+              await connection.execute(`
                 INSERT INTO sync_log (offline_id, staff_code, type, timestamp, status, error_message)
                 VALUES (?, ?, ?, ?, 'conflict', ?)
               `, [offline_id, staff_code, type, timestamp, `Staff already has active shift: ${existingShifts[0].id}`]);
@@ -729,7 +747,7 @@ router.post('/sync', async (req, res) => {
             }
 
             // Create new shift
-            await connection.query(`
+            await connection.execute(`
               INSERT INTO shifts (staff_code, venue_code, clock_in, shift_state, last_action_time)
               VALUES (?, ?, ?, 'ACTIVE', ?)
             `, [staff_code, venue_code, timestamp, timestamp]);
@@ -744,7 +762,7 @@ router.post('/sync', async (req, res) => {
             }
 
             // Get shift details for pay calculation including business_code
-            const [shifts] = await connection.query(`
+            const [shifts] = await connection.execute(`
               SELECT s.*, v.business_code,
                      pr.weekday_rate, pr.saturday_rate, pr.sunday_rate, pr.public_holiday_rate
               FROM shifts s
@@ -785,7 +803,7 @@ router.post('/sync', async (req, res) => {
             });
 
             // Update shift
-            await connection.query(`
+            await connection.execute(`
               UPDATE shifts
               SET clock_out = ?, hours_worked = ?, payday_type = ?, applied_rate = ?, total_pay = ?, shift_state = 'COMPLETED'
               WHERE id = ?
@@ -800,7 +818,7 @@ router.post('/sync', async (req, res) => {
               throw new Error('Missing shift_id for breakin');
             }
 
-            const [breakinResult] = await connection.query(`
+            const [breakinResult] = await connection.execute(`
               UPDATE shifts
               SET shift_state = 'ON_BREAK', last_action_time = ?
               WHERE id = ? AND shift_state = 'ACTIVE'
@@ -819,7 +837,7 @@ router.post('/sync', async (req, res) => {
               throw new Error('Missing shift_id for breakout');
             }
 
-            const [breakoutResult] = await connection.query(`
+            const [breakoutResult] = await connection.execute(`
               UPDATE shifts
               SET break_minutes = break_minutes + TIMESTAMPDIFF(MINUTE, last_action_time, ?),
                   shift_state = 'ACTIVE',
@@ -839,7 +857,7 @@ router.post('/sync', async (req, res) => {
         }
 
         // Log successful sync to sync_log
-        await connection.query(`
+        await connection.execute(`
           INSERT INTO sync_log (offline_id, staff_code, type, timestamp, status)
           VALUES (?, ?, ?, ?, 'synced')
         `, [offline_id, staff_code || 'unknown', type, timestamp]);
@@ -851,7 +869,7 @@ router.post('/sync', async (req, res) => {
 
         // Log failed event to sync_log
         try {
-          await connection.query(`
+          await connection.execute(`
             INSERT INTO sync_log (offline_id, staff_code, type, timestamp, status, error_message)
             VALUES (?, ?, ?, ?, 'failed', ?)
           `, [offline_id, staff_code || 'unknown', type, timestamp, eventError.message]);

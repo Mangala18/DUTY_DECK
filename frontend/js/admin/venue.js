@@ -5,7 +5,7 @@
 
 import { apiRequest } from '../utils/api.js';
 import { Storage } from '../utils/storage.js';
-import { showToast } from '../utils/ui.js';
+import { showToast, debounce } from '../utils/ui.js';
 
 /**
  * Load and display all venues for the current business
@@ -16,6 +16,17 @@ export async function loadVenues() {
 
   if (!venueList) {
     console.warn('Venue list container not found');
+    return;
+  }
+
+  // Check if businessCode is valid (not null, undefined, or "null" string)
+  if (!businessCode || businessCode === 'null') {
+    venueList.innerHTML = `
+      <div class="alert alert-danger m-4" role="alert">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        <strong>Error:</strong> Unable to determine business context. Please contact your administrator.
+      </div>`;
+    showToast('Unable to determine business context', 'error');
     return;
   }
 
@@ -133,8 +144,15 @@ export async function editVenue(venueCode) {
   try {
     console.log('Editing venue:', venueCode);
 
+    const businessCode = Storage.getUserBusinessCode();
+
+    // Check if businessCode is valid
+    if (!businessCode || businessCode === 'null') {
+      throw new Error('Unable to determine business context');
+    }
+
     // Get venue details
-    const response = await apiRequest(`/system-admin/staff/venues?business_code=${Storage.getUserBusinessCode()}`);
+    const response = await apiRequest(`/system-admin/staff/venues?business_code=${businessCode}`);
 
     if (!response.success || !response.data) {
       throw new Error('Failed to load venue details');
@@ -348,11 +366,15 @@ export function initVenueModule() {
     });
   }
 
-  // Venue search
+  // Venue search with debounce
   const venueSearchInput = document.getElementById('venueSearchInput');
   if (venueSearchInput) {
+    const debouncedFilter = debounce((value) => {
+      filterVenues(value);
+    }, 300);
+
     venueSearchInput.addEventListener('input', (e) => {
-      filterVenues(e.target.value);
+      debouncedFilter(e.target.value);
     });
   }
 }
